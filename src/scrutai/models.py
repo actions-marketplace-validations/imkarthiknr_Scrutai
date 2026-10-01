@@ -169,7 +169,7 @@ class Finding(BaseModel):
         cited = next((e for e in self.evidence if e.startswith("L") and ": " in e), "")
         code = " ".join(cited.split(": ", 1)[1].split()) if cited else ""
         raw = f"{self.file}|{what}|{code}"
-        return hashlib.sha1(raw.encode()).hexdigest()[:16]
+        return hashlib.sha1(raw.encode(), usedforsecurity=False).hexdigest()[:16]
 
     def key(self) -> tuple[str, int | None, str]:
         """Identity used for deduplication across agents.

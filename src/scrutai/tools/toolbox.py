@@ -34,7 +34,12 @@ def _read(args: dict[str, Any], box: Toolbox) -> str:
 
 
 def _grep(args: dict[str, Any], box: Toolbox) -> str:
-    hits = grep(str(args["pattern"]), box.repo_root, regex=bool(args.get("regex", False)))
+    hits = grep(
+        str(args["pattern"]),
+        box.repo_root,
+        regex=bool(args.get("regex", False)),
+        glob=str(args.get("glob", "")),
+    )
     return "\n".join(hits) if hits else "(no matches)"
 
 
@@ -68,8 +73,9 @@ TOOLS: dict[str, Tool] = {
         ),
         Tool(
             "grep",
-            'grep {"pattern": str, "regex"?: bool}',
-            "Search the whole repo; returns path:line:text hits (fixed string unless regex).",
+            'grep {"pattern": str, "regex"?: bool, "glob"?: str}',
+            "Search the repo (optionally only paths matching glob, e.g. '*test*'); "
+            "returns path:line:text hits (fixed string unless regex).",
             _grep,
         ),
         Tool(

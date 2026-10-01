@@ -51,16 +51,19 @@ def read_file(
     return "\n".join(f"{i + 1}: {lines[i]}" for i in range(lo, hi))
 
 
-def grep(pattern: str, repo_root: str = ".", regex: bool = False) -> list[str]:
+def grep(pattern: str, repo_root: str = ".", regex: bool = False, glob: str = "") -> list[str]:
     """Search the repo; returns `path:line:text` hits. Prefers ripgrep, falls back to git grep.
 
     Fixed-string by default so model-supplied text like `eval(` is not a broken regex.
+    `glob` restricts the search to matching paths (e.g. `*test*`).
     """
     mode = [] if regex else ["-F"]
-    out = _run(["rg", "-n", "--no-heading", *mode, "-e", pattern, "."], cwd=repo_root)
+    rg_glob = ["-g", glob] if glob else []
+    out = _run(["rg", "-n", "--no-heading", *mode, *rg_glob, "-e", pattern, "."], cwd=repo_root)
     if not out:
         git_mode = ["-E"] if regex else ["-F"]
-        out = _run(["git", "grep", "-n", *git_mode, "-e", pattern], cwd=repo_root)
+        spec = ["--", f":(glob)**/{glob}"] if glob else []
+        out = _run(["git", "grep", "-n", *git_mode, "-e", pattern, *spec], cwd=repo_root)
     hits = [line.removeprefix("./") for line in out.splitlines() if line.strip()]
     return hits[:_MAX_GREP_HITS]
 

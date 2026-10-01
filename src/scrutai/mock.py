@@ -236,6 +236,8 @@ class SrcLine:
     kind: str
     line: int
     text: str
+    #: Inside a triple-quoted string (docstring, embedded source, fixture).
+    in_string: bool = False
 
 
 def parse_files(prompt: str) -> list[SrcLine]:
@@ -253,12 +255,28 @@ def parse_files(prompt: str) -> list[SrcLine]:
             continue
         lm = _LINE.match(raw)
         if cur and lm:
-            out.append(SrcLine(cur[0], cur[1], int(lm.group(1)), lm.group(2)))
+            text = lm.group(2)
+            prev = out[-1] if out and out[-1].file == cur[0] else None
+            # Approximate: carry triple-quote state across consecutive lines.
+            inside = bool(prev and prev.in_string) != bool(prev and _opens(prev.text))
+            out.append(SrcLine(cur[0], cur[1], int(lm.group(1)), text, inside))
     return out
 
 
+def _opens(text: str) -> bool:
+    """True if the line toggles triple-quoted-string state."""
+    return (text.count('"""') + text.count("'''")) % 2 == 1
+
+
 def _observations(prompt: str) -> list[str]:
-    return [chunk for chunk in prompt.split("OBSERVATION:\n")[1:]]
+    # Protocol markers only count at line start: reviewed code is always
+    # prefixed with `L<n>: `, so a diff that *contains* the text
+    # "OBSERVATION:" or "--- FINAL" (Scrutai reviewing itself) can't spoof them.
+    return re.split(r"^OBSERVATION:\n", prompt, flags=re.M)[1:]
+
+
+def _final(prompt: str) -> bool:
+    return re.search(r"^--- FINAL", prompt, re.M) is not None
 
 
 def _finding(rule: Rule, src: SrcLine, extra: list[str], confidence: float) -> dict[str, Any]:
@@ -320,7 +338,7 @@ class MockLLMClient:
         loops: dict[int, SrcLine] = {}
         for idx, src in enumerate(lines):
             for rule in RULES:
-                if rule.agent != agent or not rule.pattern.search(src.text):
+                if rule.agent != agent or src.in_string or not rule.pattern.search(src.text):
                     continue
                 if rule.in_loop:
                     loop = enclosing_loop(lines, idx)
@@ -331,7 +349,7 @@ class MockLLMClient:
         observations = _observations(prompt)
         probed = [(rule, src) for rule, src in hits if rule.probe]
         # ReAct: a careful security reviewer looks for other call sites first.
-        if agent == "security" and probed and not observations and "--- FINAL" not in prompt:
+        if agent == "security" and probed and not observations and not _final(prompt):
             rule, src = probed[0]
             m = rule.pattern.search(src.text)
             sink = m.group(0) if m else rule.probe
@@ -397,16 +415,23 @@ class MockLLMClient:
         defs = [
             (m.group(1), src)
             for src in lines
-            if src.kind == "code" and (m := _DEF.match(src.text)) and not m.group(1).startswith("_")
+            if src.kind == "code"
+            and not src.in_string
+            and (m := _DEF.match(src.text))
+            and not m.group(1).startswith("_")
+            and len(src.text) - len(src.text.lstrip()) < 8  # nested helpers aren't API
         ]
         if not defs:
             return {"findings": []}
         observations = _observations(prompt)
-        if not observations and "--- FINAL" not in prompt:
+        if not observations and not _final(prompt):
             names = "|".join(sorted({name for name, _ in defs}))
             return {
                 "thought": "Look for existing tests of the new functions.",
-                "action": {"tool": "grep", "args": {"pattern": rf"\b({names})\b", "regex": True}},
+                "action": {
+                    "tool": "grep",
+                    "args": {"pattern": rf"\b({names})\b", "regex": True, "glob": "*test*"},
+                },
             }
         test_text = "\n".join(src.text for src in lines if src.kind == "test")
         repo_hits = [
@@ -504,6 +529,8 @@ class MockLLMClient:
                 return kill(0.2, "Placeholder or test-fixture value, not a real credential.")
         if category == "injection" and _CONSTANT_SINK.search(cited):
             return kill(0.3, "The command is a constant literal; no untrusted input reaches it.")
+        if category == "broad_except" and _reraises(prompt, fields.get("LINE", "")):
+            return kill(0.2, "The handler re-raises; nothing is swallowed.")
         if category == "debug_leftover" and _SCRIPT_PATH.search(fields.get("FILE", "")):
             return kill(0.2, "This is a CLI/script; printing is its output channel.")
         if category == "untracked_todo" and _TICKET.search(cited):
@@ -560,6 +587,18 @@ _PLACEHOLDER = re.compile(
     r"changeme|fake|sample|redacted).*|test.*)$",
     re.I,
 )
+
+
+def _reraises(prompt: str, line: str) -> bool:
+    """Does a `raise` follow within 3 lines of the cited except clause?"""
+    try:
+        n = int(line)
+    except ValueError:
+        return False
+    for m in re.finditer(r"^[+ ]L(\d+): (.*)$", _block(prompt, "CONTEXT:"), re.M):
+        if n < int(m.group(1)) <= n + 3 and re.search(r"\braise\b", m.group(2)):
+            return True
+    return False
 
 
 def _placeholder(value: str) -> bool:
