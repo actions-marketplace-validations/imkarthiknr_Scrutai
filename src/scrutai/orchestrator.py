@@ -24,7 +24,7 @@ from typing import Annotated, Any, TypedDict, cast
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from .agents import REGISTRY
+from .agents import REGISTRY, agent_class
 from .concurrency import parallel_map
 from .config import ScrutaiConfig
 from .critic import critique, dedupe
@@ -77,9 +77,16 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
 
     def specialist_node(task: SpecialistTask) -> ReviewState:
         with span(
-            "node", "specialist", agent=task["agent"], chunk=task["chunk"], files=task["diff"].paths
+            "node",
+            "specialist",
+            agent=task["agent"],
+            chunk=task["chunk"],
+            files=task["diff"].paths,
+            backend=config.backend_for(task["agent"]),
         ) as extra:
-            found = REGISTRY[task["agent"]](llm, config).review(task["diff"])
+            found = agent_class(task["agent"], config.backend_for(task["agent"]))(
+                llm, config
+            ).review(task["diff"])
             extra["findings"] = len(found)
         return {"raw": found}
 
@@ -100,7 +107,8 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         def defend(f: Finding) -> Finding:
             if not (f.contested and f.agent in REGISTRY):
                 return f
-            out = REGISTRY[f.agent](llm, config).defend(f, state["diff"])
+            cls = agent_class(f.agent, config.backend_for(f.agent))
+            out = cls(llm, config).defend(f, state["diff"])
             # Read the defense's own record: `alive` is always False while a
             # finding is under challenge, so it can't tell defended from withdrawn.
             last = out.history[-1] if out.history else ""

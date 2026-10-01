@@ -21,6 +21,7 @@ semgrep = ["semgrep>=1.70"]
 otel = ["opentelemetry-api>=1.24", "opentelemetry-sdk>=1.24"]
 langfuse = ["langfuse>=2.0"]
 web = ["fastapi>=0.115", "uvicorn>=0.30"]
+crewai = ["crewai>=1.15"]
 dev = [
     "pytest>=8.2",
     "ruff>=0.5",
@@ -31,6 +32,7 @@ dev = [
     "uvicorn>=0.30",
     "httpx>=0.27",
     "playwright>=1.40",         # browser end-to-end tests of the theater
+    "crewai>=1.15",             # framework-adapter tests
 ]
 
 [project.scripts]
@@ -64,4 +66,7 @@ testpaths = ["tests"]
 filterwarnings = [
     # Emitted inside litellm's own pydantic models; not actionable here.
     "ignore:Item 'summary' on TypedDict class:UserWarning",
+    # CrewAI's own internal deprecations; not raised by Scrutai code.
+    "ignore::DeprecationWarning:crewai.*",
+    "ignore::PendingDeprecationWarning:crewai.*",
 ]

@@ -22,6 +22,13 @@ from ..llm import LLMClient, LLMError, extract_json
 from ..models import ChangedFile, DiffContext, Finding, Severity
 from ..tools import Toolbox
 
+REVIEW_ANSWER = ("findings",)
+DEFENSE_ANSWER = ("defense", "withdraw")
+
+
+def is_answer(payload: dict[str, Any], keys: tuple[str, ...]) -> bool:
+    return any(payload.get(k) not in (None, False) for k in keys)
+
 
 class Specialist:
     name: ClassVar[str] = "specialist"
@@ -83,24 +90,48 @@ class Specialist:
         for obs in self.seed(diff, toolbox):
             transcript.append(f"SEED OBSERVATION:\n{obs}")
 
+        payload = self._loop(
+            system,
+            transcript,
+            toolbox,
+            answer_keys=REVIEW_ANSWER,
+            final_note="--- FINAL: tool budget spent; reply with findings now.",
+        )
+        return self._parse(payload, diff, toolbox.calls) if payload is not None else []
+
+    def _loop(
+        self,
+        system: str,
+        transcript: list[str],
+        toolbox: Toolbox,
+        answer_keys: tuple[str, ...],
+        final_note: str | None = None,
+    ) -> dict[str, Any] | None:
+        """The ReAct loop: act through `toolbox` until the model answers.
+
+        This is the framework seam. Everything around it (prompts, tools,
+        parsing, the debate) is shared; a CrewAI- or ADK-backed specialist
+        overrides only this method. Returns the answer payload (a JSON object
+        containing one of `answer_keys`), or None if the model never answered.
+        """
         steps = max(self.config.max_agent_steps, 1)
         for step in range(1, steps + 1):
-            if step == steps:
-                transcript.append("--- FINAL: tool budget spent; reply with findings now.")
+            if final_note and step == steps:
+                transcript.append(final_note)
             payload = self._ask(system, "\n".join(transcript))
             if payload is None:
-                return []
-            if "findings" in payload:
-                return self._parse(payload, diff, toolbox.calls)
+                return None
+            if is_answer(payload, answer_keys):
+                return payload
             action = payload.get("action")
             if not isinstance(action, dict) or step == steps:
-                return []
+                return None
             tool, args = str(action.get("tool", "")), action.get("args") or {}
             obs = toolbox.run(tool, args if isinstance(args, dict) else {})
             transcript.append(
                 f"--- STEP {step}\nACTION: {tool} {json.dumps(args)}\nOBSERVATION:\n{obs}"
             )
-        return []
+        return None
 
     def _ask(self, system: str, prompt: str) -> dict[str, Any] | None:
         try:
@@ -163,30 +194,19 @@ class Specialist:
             f"BODY: {f.body}\nEVIDENCE SO FAR:\n{prior}",
             f"CHALLENGE: {f.challenge}",
         ]
-        for step in range(1, max(self.config.max_agent_steps, 1) + 1):
-            payload = self._ask(system, "\n".join(transcript))
-            if payload is None:
-                break
-            if payload.get("withdraw"):
-                f.alive, f.contested = False, False
-                reason = str(payload.get("reason", "")).strip()
-                f.critic_note = f"withdrawn by {self.name}: {reason}".rstrip(": ")
-                f.history.append(f"defense: withdrawn {reason}".rstrip())
-                return f
-            if "defense" in payload:
-                f.defense = str(payload["defense"])
-                new = [str(e) for e in payload.get("evidence", []) if e]
-                f.evidence = [*f.evidence, *new, *toolbox.calls]
-                f.history.append("defense: submitted")
-                return f
-            action = payload.get("action")
-            if not isinstance(action, dict):
-                break
-            tool, args = str(action.get("tool", "")), action.get("args") or {}
-            obs = toolbox.run(tool, args if isinstance(args, dict) else {})
-            transcript.append(
-                f"--- STEP {step}\nACTION: {tool} {json.dumps(args)}\nOBSERVATION:\n{obs}"
-            )
+        payload = self._loop(system, transcript, toolbox, answer_keys=DEFENSE_ANSWER)
+        if payload is not None and payload.get("withdraw"):
+            f.alive, f.contested = False, False
+            reason = str(payload.get("reason", "")).strip()
+            f.critic_note = f"withdrawn by {self.name}: {reason}".rstrip(": ")
+            f.history.append(f"defense: withdrawn {reason}".rstrip())
+            return f
+        if payload is not None and "defense" in payload:
+            f.defense = str(payload["defense"])
+            new = [str(e) for e in payload.get("evidence", []) if e]
+            f.evidence = [*f.evidence, *new, *toolbox.calls]
+            f.history.append("defense: submitted")
+            return f
         f.history.append("defense: none offered")
         return f
 

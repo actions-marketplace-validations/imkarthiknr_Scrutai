@@ -15,7 +15,26 @@ REGISTRY: dict[str, type[Specialist]] = {
     "style": StyleAgent,
 }
 
+BACKENDS = ("native", "crewai")
+
+
+def agent_class(name: str, backend: str = "native") -> type[Specialist]:
+    """Resolve a specialist name to its class on the requested framework backend."""
+    base = REGISTRY[name]
+    if backend == "native":
+        return base
+    if backend == "crewai":
+        try:
+            from .crewai_backend import crewai_specialist
+        except ImportError as exc:
+            raise RuntimeError('backend "crewai" needs: pip install "scrutai[crewai]"') from exc
+        return crewai_specialist(base)
+    raise ValueError(f"unknown backend {backend!r}; expected one of {BACKENDS}")
+
+
 __all__ = [
+    "BACKENDS",
+    "agent_class",
     "REGISTRY",
     "CorrectnessAgent",
     "PerformanceAgent",

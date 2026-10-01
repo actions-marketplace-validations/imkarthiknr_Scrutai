@@ -231,3 +231,65 @@ def markdown_report(metrics: dict[str, Any], results: list[CaseResult]) -> str:
                 f"| {r.case.id} | {', '.join(r.missed) or '-'} | {', '.join(r.spurious) or '-'} |"
             )
     return "\n".join(lines) + "\n"
+
+
+def compare_backends(
+    path: str | Path, config: ScrutaiConfig, backends: list[str]
+) -> dict[str, Any]:
+    """Run the same benchmark with every specialist on each framework backend.
+
+    The model, prompts, tools and critic are held constant, so differences are
+    attributable to the orchestration framework alone.
+    """
+    import time
+
+    runs: dict[str, dict[str, Any]] = {}
+    reported: dict[str, list[list[str]]] = {}
+    for backend in backends:
+        cfg = config.model_copy(update={"backends": {"*": backend}})
+        details: list[CaseResult] = []
+        start = time.perf_counter()
+        metrics = run_benchmark(path, cfg, details)
+        metrics["seconds"] = round(time.perf_counter() - start, 2)
+        runs[backend] = metrics
+        reported[backend] = [sorted(r.reported) for r in details]
+    first = backends[0]
+    agreement = {
+        b: round(
+            sum(x == y for x, y in zip(reported[first], reported[b], strict=True))
+            / max(len(reported[first]), 1),
+            3,
+        )
+        for b in backends[1:]
+    }
+    return {"backends": runs, "agreement_with_" + first: agreement}
+
+
+def compare_markdown(comparison: dict[str, Any]) -> str:
+    runs: dict[str, dict[str, Any]] = comparison["backends"]
+    names = list(runs)
+    rows = [
+        ("precision", "precision"),
+        ("recall", "recall"),
+        ("F1", "f1"),
+        ("false positives", "false_positives"),
+        ("clean-case FPR", "clean_case_fpr"),
+        ("critic precision lift", "critic_precision_lift"),
+        ("avg tokens / case", "avg_tokens_per_case"),
+        ("wall time (s)", "seconds"),
+    ]
+    lines = [
+        "# Framework comparison",
+        "",
+        "Same model, prompts, tools and critic; only the agent-loop framework differs.",
+        "",
+        "| metric | " + " | ".join(names) + " |",
+        "|---|" + "---|" * len(names),
+    ]
+    for label, key in rows:
+        lines.append(f"| {label} | " + " | ".join(str(runs[n][key]) for n in names) + " |")
+    agreement_key = next(k for k in comparison if k.startswith("agreement_with_"))
+    for other, score in comparison[agreement_key].items():
+        base = agreement_key.removeprefix("agreement_with_")
+        lines += ["", f"Per-case agreement {base} vs {other}: **{score:.0%}** of cases identical."]
+    return "\n".join(lines) + "\n"

@@ -40,6 +40,9 @@ class ScrutaiConfig(BaseModel):
     # Specialists review the diff in chunks of about this many added lines
     # (bounded prompts, per-chunk routing, more parallelism); 0 = one chunk.
     chunk_lines: int = 250
+    # Agent framework per specialist: {"security": "crewai"}, or {"*": "crewai"}
+    # for all. Unlisted agents run on the native LangGraph ReAct loop.
+    backends: dict[str, str] = Field(default_factory=dict)
     # Parallel critic/defense calls (specialists always fan out concurrently).
     concurrency: int = 4
     # Hard ceilings for one review; 0 disables. When hit, remaining LLM calls
@@ -71,6 +74,21 @@ class ScrutaiConfig(BaseModel):
         if unknown:
             raise ValueError(f"unknown agent(s) {unknown}; available: {sorted(REGISTRY)}")
         return names
+
+    @field_validator("backends")
+    @classmethod
+    def _known_backends(cls, backends: dict[str, str]) -> dict[str, str]:
+        from .agents import BACKENDS, REGISTRY
+
+        for agent, backend in backends.items():
+            if agent != "*" and agent not in REGISTRY:
+                raise ValueError(f"backends: unknown agent {agent!r}")
+            if backend not in BACKENDS:
+                raise ValueError(f"backends: unknown backend {backend!r}; use one of {BACKENDS}")
+        return backends
+
+    def backend_for(self, agent: str) -> str:
+        return self.backends.get(agent, self.backends.get("*", "native"))
 
     @field_validator("llm_mode")
     @classmethod

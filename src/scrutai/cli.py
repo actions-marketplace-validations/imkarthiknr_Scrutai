@@ -231,13 +231,44 @@ def eval_cmd(
     min_recall: float = typer.Option(0.0, help="Exit 1 if recall falls below this."),
     report: str | None = typer.Option(None, help="Also write a markdown report here."),
     output_json: bool = typer.Option(False, "--json", help="Emit metrics as JSON."),
+    compare: str | None = typer.Option(
+        None, help="Also run every agent on this backend (e.g. crewai) and compare."
+    ),
 ) -> None:
     """Run the labeled benchmark and report precision / recall / critic lift."""
-    from .eval.harness import CaseResult, markdown_report, run_benchmark
+    from .eval.harness import (
+        CaseResult,
+        compare_backends,
+        compare_markdown,
+        markdown_report,
+        run_benchmark,
+    )
 
     if not Path(benchmark).exists():
         console.print(f"[red]No benchmark at {benchmark}[/red]")
         raise typer.Exit(code=2)
+    if compare:
+        try:
+            comparison = compare_backends(benchmark, _load_config(config_path), ["native", compare])
+        except (ValueError, RuntimeError) as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        md = compare_markdown(comparison)
+        if report:
+            Path(report).write_text(md)
+        if output_json:
+            typer.echo(json.dumps(comparison, indent=2))
+        else:
+            console.print(Markdown(md))
+        bad = [
+            f"{b}: precision {m['precision']} recall {m['recall']}"
+            for b, m in comparison["backends"].items()
+            if m["precision"] < min_precision or m["recall"] < min_recall
+        ]
+        if bad:
+            console.print(f"[red]Benchmark gate failed:[/red] {'; '.join(bad)}")
+            raise typer.Exit(code=1)
+        return
     details: list[CaseResult] = []
     try:
         metrics = run_benchmark(benchmark, _load_config(config_path), details)
