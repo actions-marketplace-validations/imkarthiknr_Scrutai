@@ -33,12 +33,13 @@ def test_jsonl_trace_covers_nodes_llm_tools_and_decisions(tmp_path: Path) -> Non
     tracer.close()
     events = _events(path)
     kinds = {e["kind"] for e in events}
-    assert kinds == {"node", "llm", "tool", "decision", "review"}
-    nodes = [e["name"] for e in events if e["kind"] == "node"]
+    assert kinds == {"node", "llm", "tool", "decision", "review", "plan", "finding", "defense"}
+    nodes = [e["name"] for e in events if e["kind"] == "node" and e["phase"] == "end"]
     assert nodes[0] == "route" and nodes[-1] == "verdict" and "critic" in nodes
     final = events[-1]
     assert final["kind"] == "review" and final["kept"] == len(result.findings)
-    assert sum(int(e["tokens"]) for e in events if e["kind"] == "llm") == result.tokens_used  # type: ignore[call-overload]
+    llm_ends = [e for e in events if e["kind"] == "llm" and e["phase"] == "end"]
+    assert sum(int(e["tokens"]) for e in llm_ends) == result.tokens_used  # type: ignore[call-overload]
     assert active() is None  # tracer is uninstalled after the review
 
 
@@ -84,3 +85,43 @@ def test_otel_spans() -> None:
 def test_invalid_tracing_mode_rejected() -> None:
     with pytest.raises(ValueError):
         ScrutaiConfig(tracing="carrier-pigeon")
+
+
+def test_live_event_stream_tells_the_whole_story() -> None:
+    events: list[dict[str, object]] = []
+    tracer = Tracer(listeners=[events.append], run_id="r1")
+    diff = DiffContext(
+        files=[ChangedFile(path="lib/a.py", patch="+def _f(x=[]):\n+    os.system(x)\n")]
+    )
+    result = review_diff(diff, ScrutaiConfig(), MockLLMClient(), tracer)
+
+    assert all(e["run"] == "r1" for e in events)
+    assert [e["seq"] for e in events] == list(range(1, len(events) + 1))
+    # Every span that started also ended, with the same id.
+    starts = {e["id"] for e in events if e.get("phase") == "start"}
+    ends = {e["id"] for e in events if e.get("phase") == "end"}
+    assert starts == ends and starts
+    (plan,) = [e for e in events if e["kind"] == "plan"]
+    assert {t["agent"] for t in plan["tasks"]} >= {"security", "correctness"}  # type: ignore[attr-defined]
+    raised = {e["finding"] for e in events if e["kind"] == "finding"}
+    decided = {e["finding"] for e in events if e["kind"] == "decision"}
+    assert raised == decided  # every raised finding went on trial
+    defended = [e for e in events if e["kind"] == "defense"]
+    assert defended and all(e["outcome"] in ("defended", "withdrawn", "silent") for e in defended)
+    kept = {f"{f.file}:{f.line}:{f.category}" for f in result.findings}
+    assert kept <= raised
+
+
+def test_a_broken_listener_never_breaks_a_review() -> None:
+    def explode(_: dict[str, object]) -> None:
+        raise RuntimeError("viewer crashed")
+
+    result = review_diff(DIFF, ScrutaiConfig(), MockLLMClient(), Tracer(listeners=[explode]))
+    assert result.findings
+
+
+def test_per_call_tokens_are_exact_under_concurrency() -> None:
+    events: list[dict[str, object]] = []
+    result = review_diff(DIFF, ScrutaiConfig(), MockLLMClient(), Tracer(listeners=[events.append]))
+    total = sum(int(e["tokens"]) for e in events if e["kind"] == "llm" and e["phase"] == "end")  # type: ignore[call-overload]
+    assert total == result.tokens_used

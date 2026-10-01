@@ -298,6 +298,7 @@ class MockLLMClient:
     def __init__(self) -> None:
         self._tokens = 0
         self._lock = threading.Lock()
+        self._last = threading.local()
 
     @property
     def tokens_used(self) -> int:
@@ -307,10 +308,17 @@ class MockLLMClient:
     def cost_usd(self) -> float:
         return 0.0
 
+    @property
+    def last_call_tokens(self) -> int:
+        """Tokens of this thread's most recent call (exact under concurrency)."""
+        return int(getattr(self._last, "tokens", 0))
+
     def complete(self, *, model: str, system: str, prompt: str) -> str:
         reply = self._reply(system, prompt)
         with self._lock:  # specialists and critic calls run on several threads
-            self._tokens += (len(system) + len(prompt) + len(reply)) // 4
+            tokens = (len(system) + len(prompt) + len(reply)) // 4
+            self._tokens += tokens
+        self._last.tokens = tokens
         return reply
 
     # ---- dispatch ------------------------------------------------------------

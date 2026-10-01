@@ -62,6 +62,7 @@ class LiteLLMClient:
         self._tokens = 0
         self._cost = 0.0
         self._lock = threading.Lock()
+        self._last = threading.local()
 
     @property
     def tokens_used(self) -> int:
@@ -70,6 +71,11 @@ class LiteLLMClient:
     @property
     def cost_usd(self) -> float:
         return self._cost
+
+    @property
+    def last_call_tokens(self) -> int:
+        """Tokens of this thread's most recent call (exact under concurrency)."""
+        return int(getattr(self._last, "tokens", 0))
 
     def complete(self, *, model: str, system: str, prompt: str) -> str:
         import litellm  # imported lazily so mock runs need no provider setup
@@ -96,6 +102,7 @@ class LiteLLMClient:
         with self._lock:  # calls arrive from several threads
             self._tokens += tokens
             self._cost += cost
+        self._last.tokens = tokens
         content = resp.choices[0].message.content
         if not content:
             raise LLMError(f"{model}: empty response")
@@ -139,6 +146,10 @@ class BudgetedClient:
                     f"budget spent: {self.inner.tokens_used} tokens, ${self.inner.cost_usd:.4f}"
                 )
         return self.inner.complete(model=model, system=system, prompt=prompt)
+
+    @property
+    def last_call_tokens(self) -> int | None:
+        return getattr(self.inner, "last_call_tokens", None)
 
 
 def make_client(mode: str) -> LLMClient:

@@ -32,7 +32,7 @@ from .diff import chunk_diff
 from .llm import BudgetedClient, LLMClient
 from .models import DiffContext, Finding, ReviewResult, Verdict
 from .router import heuristic_route, route
-from .trace import Tracer, TracingClient, span, traced_node, tracing
+from .trace import Tracer, TracingClient, emit, finding_ref, span, traced_node, tracing
 
 
 class ReviewState(TypedDict, total=False):
@@ -48,6 +48,7 @@ class ReviewState(TypedDict, total=False):
 class SpecialistTask(TypedDict):
     diff: DiffContext
     agent: str
+    chunk: int
 
 
 def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
@@ -59,15 +60,25 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         # Each chunk is routed on its own, so a chunk without risky code never
         # wakes the security agent even when another chunk did.
         sends = [
-            Send("specialist", {"diff": chunk, "agent": name})
-            for chunk in chunk_diff(state["diff"], config.chunk_lines)
+            Send("specialist", {"diff": chunk, "agent": name, "chunk": i})
+            for i, chunk in enumerate(chunk_diff(state["diff"], config.chunk_lines))
             for name in heuristic_route(chunk, config)
             if name in state["selected"]
         ]
+        emit(
+            "plan",
+            agents=state["selected"],
+            tasks=[
+                {"agent": t.arg["agent"], "chunk": t.arg["chunk"], "files": t.arg["diff"].paths}
+                for t in sends
+            ],
+        )
         return sends or "collect"
 
     def specialist_node(task: SpecialistTask) -> ReviewState:
-        with span("node", "specialist", agent=task["agent"], files=task["diff"].paths) as extra:
+        with span(
+            "node", "specialist", agent=task["agent"], chunk=task["chunk"], files=task["diff"].paths
+        ) as extra:
             found = REGISTRY[task["agent"]](llm, config).review(task["diff"])
             extra["findings"] = len(found)
         return {"raw": found}
@@ -75,7 +86,10 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
     def collect_node(state: ReviewState) -> ReviewState:
         # Branches finish in any order: sort before dedup so ties break the same way.
         raw = sorted(state.get("raw", []), key=lambda f: (f.file, f.line or 0, f.category, f.agent))
-        return {"findings": dedupe(raw)}
+        findings = dedupe(raw)
+        for f in findings:
+            emit("finding", **finding_ref(f), evidence=f.evidence[:3])
+        return {"findings": findings}
 
     def critic_node(state: ReviewState) -> ReviewState:
         round_no = state.get("round", 0) + 1
@@ -84,9 +98,17 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
 
     def defend_node(state: ReviewState) -> ReviewState:
         def defend(f: Finding) -> Finding:
-            if f.contested and f.agent in REGISTRY:
-                return REGISTRY[f.agent](llm, config).defend(f, state["diff"])
-            return f
+            if not (f.contested and f.agent in REGISTRY):
+                return f
+            out = REGISTRY[f.agent](llm, config).defend(f, state["diff"])
+            outcome = "withdrawn" if not out.alive else ("defended" if out.defense else "silent")
+            emit(
+                "defense",
+                outcome=outcome,
+                argument=out.defense or out.critic_note,
+                **finding_ref(out),
+            )
+            return out
 
         return {"findings": parallel_map(defend, state["findings"], config.concurrency)}
 

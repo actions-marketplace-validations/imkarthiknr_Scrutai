@@ -2,8 +2,10 @@
 
 Three sinks, all optional:
 
-* JSONL (`scrutai review --trace run.jsonl`): one event per graph node, LLM
-  call and tool call, with timings and token deltas. Zero dependencies.
+* JSONL (`scrutai review --trace run.jsonl`): start/end events for every graph
+  node, LLM call and tool call (timings, token deltas), plus the run plan, each
+  finding raised, each critic decision and each defense. Zero dependencies.
+* Listeners: in-process callbacks; `scrutai serve` streams them to the browser.
 * OpenTelemetry (`tracing: otel`): a span per node / LLM call / tool call, sent
   wherever your OTel SDK is configured to export. Needs `opentelemetry-api`.
 * Langfuse (`tracing: langfuse`): LiteLLM's built-in callback logs every live
@@ -20,18 +22,37 @@ import functools
 import json
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from .llm import LLMClient
 
+Listener = Callable[[dict[str, Any]], None]
+
 
 class Tracer:
-    """Fans events out to the configured sinks."""
+    """Fans events out to the configured sinks.
 
-    def __init__(self, jsonl: str | None = None, otel: bool = False) -> None:
+    Every event carries the review's `run` id and a monotonically increasing
+    `seq`. Spans emit a `phase: "start"` event when work begins and a
+    `phase: "end"` event (with `ms`, results, and any `error`) when it ends, so
+    a live viewer can animate work in progress. `listeners` receive every event
+    as it happens (the web UI's event bus is one).
+    """
+
+    def __init__(
+        self,
+        jsonl: str | None = None,
+        otel: bool = False,
+        listeners: list[Listener] | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        self.run_id = run_id or uuid.uuid4().hex[:12]
         self._lock = threading.Lock()
+        self._seq = 0
+        self._listeners = list(listeners or [])
         # Held open for the whole review and closed by close(); events stream in.
         self._fh = Path(jsonl).open("a", encoding="utf-8") if jsonl else None  # noqa: SIM115
         self._otel: Any = None
@@ -46,18 +67,32 @@ class Tracer:
                 ) from exc
 
     def event(self, kind: str, **fields: Any) -> None:
-        if self._fh is None:
+        if self._fh is None and not self._listeners:
             return
-        record = {"ts": round(time.time(), 3), "kind": kind, **fields}
-        line = json.dumps(record, default=str)
         with self._lock:
-            self._fh.write(line + "\n")
-            self._fh.flush()
+            self._seq += 1
+            record = {
+                "run": self.run_id,
+                "seq": self._seq,
+                "ts": round(time.time(), 3),
+                "kind": kind,
+                **fields,
+            }
+            if self._fh is not None:
+                self._fh.write(json.dumps(record, default=str) + "\n")
+                self._fh.flush()
+            listeners = list(self._listeners)
+        for listener in listeners:
+            # A broken viewer must never break a review.
+            with contextlib.suppress(Exception):
+                listener(record)
 
     @contextlib.contextmanager
     def span(self, kind: str, name: str, **attrs: Any) -> Iterator[dict[str, Any]]:
         """Time a unit of work; callers may add result fields to the yielded dict."""
         extra: dict[str, Any] = {}
+        span_id = uuid.uuid4().hex[:8]
+        self.event(kind, name=name, id=span_id, phase="start", **attrs)
         start = time.perf_counter()
         otel_cm = (
             self._otel.start_as_current_span(f"scrutai.{kind}.{name}")
@@ -79,7 +114,7 @@ class Tracer:
                         span.set_attribute(
                             f"scrutai.{k}", v if isinstance(v, int | float | str | bool) else str(v)
                         )
-                self.event(kind, name=name, **fields)
+                self.event(kind, name=name, id=span_id, phase="end", **fields)
 
     def close(self) -> None:
         if self._fh is not None:
@@ -115,6 +150,27 @@ def span(kind: str, name: str, **attrs: Any) -> Iterator[dict[str, Any]]:
         yield extra
 
 
+def emit(kind: str, **fields: Any) -> None:
+    """Module-level helper: record a point event if a tracer is active."""
+    tracer = _active
+    if tracer is not None:
+        tracer.event(kind, **fields)
+
+
+def finding_ref(f: Any) -> dict[str, Any]:
+    """The fields a viewer needs to follow one finding through the trial."""
+    return {
+        "finding": f"{f.file}:{f.line}:{f.category}",
+        "agent": f.agent,
+        "category": f.category,
+        "title": f.title,
+        "file": f.file,
+        "line": f.line,
+        "severity": f.severity.value,
+        "confidence": round(f.confidence, 3),
+    }
+
+
 def traced_node[**P, R](name: str, fn: Callable[P, R]) -> Callable[P, R]:
     """Wrap a graph node in a span; ParamSpec keeps the signature LangGraph checks."""
 
@@ -147,7 +203,11 @@ class TracingClient:
         before = self.inner.tokens_used
         with span("llm", role, model=model, prompt_chars=len(prompt)) as extra:
             reply = self.inner.complete(model=model, system=system, prompt=prompt)
-            extra["tokens"] = self.inner.tokens_used - before
+            # Calls run concurrently, so a before/after delta of the shared
+            # counter would include other threads' calls; prefer the client's
+            # per-thread figure and fall back to the delta for custom clients.
+            exact = getattr(self.inner, "last_call_tokens", None)
+            extra["tokens"] = exact if exact is not None else self.inner.tokens_used - before
             extra["reply_chars"] = len(reply)
         return reply
 
