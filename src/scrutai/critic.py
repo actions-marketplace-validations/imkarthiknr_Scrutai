@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .concurrency import parallel_map
 from .config import ScrutaiConfig
 from .llm import LLMClient, LLMError, extract_json
 from .models import DiffContext, Finding, Severity
@@ -125,10 +126,11 @@ def critique(
     Round 1 judges every finding; later rounds re-judge only the ones that were
     challenged and defended (withdrawn findings are already dead).
     """
-    return [
-        judge(llm, config, f, diff, round_no) if round_no == 1 or f.contested else f
-        for f in findings
-    ]
+
+    def one(f: Finding) -> Finding:
+        return judge(llm, config, f, diff, round_no) if round_no == 1 or f.contested else f
+
+    return parallel_map(one, findings, config.concurrency)
 
 
 def dedupe(findings: list[Finding]) -> list[Finding]:

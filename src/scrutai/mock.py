@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -278,6 +279,7 @@ class MockLLMClient:
 
     def __init__(self) -> None:
         self._tokens = 0
+        self._lock = threading.Lock()
 
     @property
     def tokens_used(self) -> int:
@@ -289,7 +291,8 @@ class MockLLMClient:
 
     def complete(self, *, model: str, system: str, prompt: str) -> str:
         reply = self._reply(system, prompt)
-        self._tokens += (len(system) + len(prompt) + len(reply)) // 4
+        with self._lock:  # specialists and critic calls run on several threads
+            self._tokens += (len(system) + len(prompt) + len(reply)) // 4
         return reply
 
     # ---- dispatch ------------------------------------------------------------

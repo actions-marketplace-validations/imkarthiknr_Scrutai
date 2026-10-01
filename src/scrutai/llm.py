@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import threading
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -60,6 +61,7 @@ class LiteLLMClient:
     def __init__(self) -> None:
         self._tokens = 0
         self._cost = 0.0
+        self._lock = threading.Lock()
 
     @property
     def tokens_used(self) -> int:
@@ -85,11 +87,14 @@ class LiteLLMClient:
         except Exception as exc:  # provider SDKs raise many unrelated types
             raise LLMError(f"{model}: {exc}") from exc
         usage = getattr(resp, "usage", None)
-        if usage is not None:
-            self._tokens += int(getattr(usage, "total_tokens", 0) or 0)
+        tokens = int(getattr(usage, "total_tokens", 0) or 0) if usage is not None else 0
+        cost = 0.0
         # Unknown model pricing raises; tokens are still tracked.
         with contextlib.suppress(Exception):
-            self._cost += float(litellm.completion_cost(completion_response=resp) or 0.0)
+            cost = float(litellm.completion_cost(completion_response=resp) or 0.0)
+        with self._lock:  # calls arrive from several threads
+            self._tokens += tokens
+            self._cost += cost
         content = resp.choices[0].message.content
         if not content:
             raise LLMError(f"{model}: empty response")

@@ -1,14 +1,16 @@
 """The orchestrator graph — hierarchical delegation, built on LangGraph.
 
-    START -> route -> specialists -> critic --(challenged & rounds left)--> defend
-                                       ^                                   |
-                                       +-----------------------------------+
-                                       |
-                                       +--(settled or out of rounds)--> verdict -> END
+                  +-> specialist (security) -+
+    START -> route -+-> specialist (tests)    -+-> collect -> critic --(challenged)--> defend
+                    +-> specialist (...)      -+                ^  |                     |
+                                                                |  +---------------------+
+                                                                |
+                                                 (settled or out of rounds) -> verdict -> END
 
 `route` inspects the diff and selects only relevant specialists (see router.py;
 a docs-only change wakes nobody). `specialists` fans the diff out to the
-selected ReAct agents. `critic` cross-examines every finding; any it
+selected ReAct agents, one concurrent branch each (LangGraph Send), and
+`collect` merges and dedupes their findings. `critic` cross-examines every finding; any it
 *challenges* go back to their specialist in `defend`, which gathers evidence and
 defends or withdraws, and the critic re-judges. `verdict` assembles the typed
 ReviewResult.
@@ -16,11 +18,14 @@ ReviewResult.
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+import operator
+from typing import Annotated, Any, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 
 from .agents import REGISTRY
+from .concurrency import parallel_map
 from .config import ScrutaiConfig
 from .critic import critique, dedupe
 from .llm import LLMClient
@@ -31,23 +36,35 @@ from .router import route
 class ReviewState(TypedDict, total=False):
     diff: DiffContext
     selected: list[str]
+    # Every specialist branch appends here concurrently; the reducer merges them.
+    raw: Annotated[list[Finding], operator.add]
     findings: list[Finding]
     round: int
     result: ReviewResult
 
 
+class SpecialistTask(TypedDict):
+    diff: DiffContext
+    agent: str
+
+
 def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
     def route_node(state: ReviewState) -> ReviewState:
-        return {"selected": route(state["diff"], config, llm), "round": 0, "findings": []}
+        return {"selected": route(state["diff"], config, llm), "round": 0}
 
-    def specialists_node(state: ReviewState) -> ReviewState:
-        # Fan-out: run each selected specialist over the diff. (v0.2: parallelize
-        # via LangGraph's Send API; sequential is correct and simpler for v0.1.)
-        found: list[Finding] = []
-        for name in state["selected"]:
-            agent = REGISTRY[name](llm, config)
-            found.extend(agent.review(state["diff"]))
-        return {"findings": dedupe(found)}
+    def fan_out(state: ReviewState) -> list[Send] | str:
+        # One branch per selected specialist; LangGraph runs them concurrently.
+        if not state["selected"]:
+            return "collect"
+        return [Send("specialist", {"diff": state["diff"], "agent": n}) for n in state["selected"]]
+
+    def specialist_node(task: SpecialistTask) -> ReviewState:
+        return {"raw": REGISTRY[task["agent"]](llm, config).review(task["diff"])}
+
+    def collect_node(state: ReviewState) -> ReviewState:
+        # Branches finish in any order: sort before dedup so ties break the same way.
+        raw = sorted(state.get("raw", []), key=lambda f: (f.file, f.line or 0, f.category, f.agent))
+        return {"findings": dedupe(raw)}
 
     def critic_node(state: ReviewState) -> ReviewState:
         round_no = state.get("round", 0) + 1
@@ -55,12 +72,12 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         return {"findings": judged, "round": round_no}
 
     def defend_node(state: ReviewState) -> ReviewState:
-        defended: list[Finding] = []
-        for f in state["findings"]:
+        def defend(f: Finding) -> Finding:
             if f.contested and f.agent in REGISTRY:
-                f = REGISTRY[f.agent](llm, config).defend(f, state["diff"])
-            defended.append(f)
-        return {"findings": defended}
+                return REGISTRY[f.agent](llm, config).defend(f, state["diff"])
+            return f
+
+        return {"findings": parallel_map(defend, state["findings"], config.concurrency)}
 
     def _next(state: ReviewState) -> str:
         if state["round"] < config.max_critic_rounds and _unsettled(state["findings"]):
@@ -83,13 +100,16 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
 
     g = StateGraph(ReviewState)
     g.add_node("route", route_node)
-    g.add_node("specialists", specialists_node)
+    # Send-target nodes take their own input type, which LangGraph's stubs can't express.
+    g.add_node("specialist", cast(Any, specialist_node))
+    g.add_node("collect", collect_node)
     g.add_node("critic", critic_node)
     g.add_node("defend", defend_node)
     g.add_node("verdict", verdict_node)
     g.add_edge(START, "route")
-    g.add_edge("route", "specialists")
-    g.add_edge("specialists", "critic")
+    g.add_conditional_edges("route", fan_out, ["specialist", "collect"])
+    g.add_edge("specialist", "collect")
+    g.add_edge("collect", "critic")
     g.add_conditional_edges("critic", _next, {"defend": "defend", "verdict": "verdict"})
     g.add_edge("defend", "critic")
     g.add_edge("verdict", END)

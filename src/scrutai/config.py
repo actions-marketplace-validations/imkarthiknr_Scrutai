@@ -36,6 +36,8 @@ class ScrutaiConfig(BaseModel):
     max_critic_rounds: int = 2
     # ReAct budget per specialist: tool calls + the final answer.
     max_agent_steps: int = 4
+    # Parallel critic/defense calls (specialists always fan out concurrently).
+    concurrency: int = 4
     token_budget: int = 200_000
     # Severity at which the CLI/Action exits non-zero (fails CI).
     fail_on: Severity = Severity.HIGH
