@@ -101,7 +101,16 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
             if not (f.contested and f.agent in REGISTRY):
                 return f
             out = REGISTRY[f.agent](llm, config).defend(f, state["diff"])
-            outcome = "withdrawn" if not out.alive else ("defended" if out.defense else "silent")
+            # Read the defense's own record: `alive` is always False while a
+            # finding is under challenge, so it can't tell defended from withdrawn.
+            last = out.history[-1] if out.history else ""
+            outcome = (
+                "withdrawn"
+                if last.startswith("defense: withdrawn")
+                else "defended"
+                if last == "defense: submitted"
+                else "silent"
+            )
             emit(
                 "defense",
                 outcome=outcome,

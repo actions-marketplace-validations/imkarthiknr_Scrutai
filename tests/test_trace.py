@@ -135,3 +135,11 @@ def test_per_call_tokens_are_exact_under_concurrency() -> None:
     result = review_diff(DIFF, ScrutaiConfig(), MockLLMClient(), Tracer(listeners=[events.append]))
     total = sum(int(e["tokens"]) for e in events if e["kind"] == "llm" and e["phase"] == "end")  # type: ignore[call-overload]
     assert total == result.tokens_used
+
+
+def test_defense_outcomes_are_reported_truthfully() -> None:
+    events: list[dict[str, object]] = []
+    result = review_diff(DIFF, ScrutaiConfig(), MockLLMClient(), Tracer(listeners=[events.append]))
+    outcomes = {e["finding"]: e["outcome"] for e in events if e["kind"] == "defense"}
+    kept = {f"{f.file}:{f.line}:{f.category}" for f in result.findings}
+    assert outcomes and all(outcomes[k] == "defended" for k in outcomes if k in kept)
