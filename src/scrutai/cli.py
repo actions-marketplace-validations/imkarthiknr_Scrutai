@@ -27,6 +27,7 @@ from .models import ChangedFile, DiffContext, ReviewResult
 from .orchestrator import review_diff
 from .report import location, to_markdown, to_sarif_json
 from .tools.semgrep import available as semgrep_available
+from .trace import Tracer, enable_langfuse
 
 app = typer.Typer(add_completion=False, help="Multi-agent code review with an adversarial critic.")
 console = Console()
@@ -102,7 +103,19 @@ def _emit(result: ReviewResult, fmt: Format, output: str | None, show_dropped: b
         typer.echo(text)
 
 
-def _review_demo(config: ScrutaiConfig) -> ReviewResult:
+def _make_tracer(config: ScrutaiConfig, path: str | None) -> Tracer | None:
+    if config.tracing == "langfuse" and config.llm_mode == "live":
+        enable_langfuse()
+    if path is None and config.tracing != "otel":
+        return None
+    try:
+        return Tracer(jsonl=path, otel=config.tracing == "otel")
+    except (RuntimeError, OSError) as exc:
+        console.print(f"[red]Tracing:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+
+def _review_demo(config: ScrutaiConfig, tracer: Tracer | None = None) -> ReviewResult:
     # A throwaway repo so the agents' tools see the demo file, not your cwd.
     with tempfile.TemporaryDirectory(prefix="scrutai-demo-") as root:
         target = Path(root) / _DEMO_FILE
@@ -110,7 +123,7 @@ def _review_demo(config: ScrutaiConfig) -> ReviewResult:
         target.write_text(_DEMO_SOURCE)
         patch = "".join(f"+{line}\n" for line in _DEMO_SOURCE.splitlines())
         diff = DiffContext(repo_root=root, files=[ChangedFile(path=_DEMO_FILE, patch=patch)])
-        return review_diff(diff, config, make_client(config.llm_mode))
+        return review_diff(diff, config, make_client(config.llm_mode), tracer)
 
 
 @app.command()
@@ -131,6 +144,7 @@ def review(
     github_repo: str | None = typer.Option(
         None, help="owner/name for --pr (default: GITHUB_REPOSITORY or the origin remote)."
     ),
+    trace: str | None = typer.Option(None, help="Write a JSONL trace of every step here."),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
     """Review a git range, a patch file, a GitHub PR, or the bundled demo.
@@ -144,8 +158,9 @@ def review(
         console.print("[red]--post needs --pr[/red]")
         raise typer.Exit(code=2)
     gh: tuple[GitHubClient, PullRequest] | None = None
+    tracer = _make_tracer(config, trace)
     if demo:
-        result = _review_demo(config)
+        result = _review_demo(config, tracer)
     else:
         try:
             if pr is not None:
@@ -165,7 +180,7 @@ def review(
             console.print(f"[red]Could not build diff:[/red] {exc}")
             raise typer.Exit(code=2) from exc
         diff = apply_filters(diff, config.include, config.exclude)
-        result = review_diff(diff, config, make_client(config.llm_mode))
+        result = review_diff(diff, config, make_client(config.llm_mode), tracer)
         if gh is not None and post:
             try:
                 rep = publish(gh[0], gh[1], result, diff)
@@ -177,6 +192,8 @@ def review(
                 f"{rep.skipped_duplicates} already posted, {rep.skipped_off_diff} off-diff.[/dim]"
             )
 
+    if tracer is not None:
+        tracer.close()
     _emit(result, fmt, output, show_dropped)
     if any(f.severity.rank >= config.fail_on.rank for f in result.findings):
         raise typer.Exit(code=1)

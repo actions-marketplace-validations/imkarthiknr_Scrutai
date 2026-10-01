@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ..trace import span
 from .repo import _confine, git_blame, grep, read_file
 
 _MAX_OBS_CHARS = 4000
@@ -115,10 +116,12 @@ class Toolbox:
         if name not in self.allowed:
             obs = f"(unknown tool {name!r}; available: {', '.join(self.allowed)})"
         else:
-            try:
-                obs = TOOLS[name].run(args, self)
-            except (KeyError, TypeError, ValueError) as exc:
-                obs = f"(bad arguments for {name}: {exc!r}; usage: {TOOLS[name].signature})"
+            with span("tool", name, args=_short(args)) as extra:
+                try:
+                    obs = TOOLS[name].run(args, self)
+                except (KeyError, TypeError, ValueError) as exc:
+                    obs = f"(bad arguments for {name}: {exc!r}; usage: {TOOLS[name].signature})"
+                extra["chars"] = len(obs)
         if len(obs) > _MAX_OBS_CHARS:
             obs = obs[:_MAX_OBS_CHARS] + "\n...(truncated)"
         hits = obs.count("\n") + 1 if not obs.startswith("(") else 0

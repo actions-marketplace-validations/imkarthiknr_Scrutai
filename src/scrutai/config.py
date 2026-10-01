@@ -58,6 +58,9 @@ class ScrutaiConfig(BaseModel):
     # missing. semgrep_config is "bundled" (offline ruleset) or any --config value.
     semgrep: str = "auto"
     semgrep_config: str = "bundled"
+    # Export spans: "none", "otel" (OpenTelemetry API) or "langfuse" (live
+    # LLM calls via LiteLLM). `scrutai review --trace FILE` writes JSONL anyway.
+    tracing: str = "none"
 
     @field_validator("enabled_agents")
     @classmethod
@@ -81,6 +84,13 @@ class ScrutaiConfig(BaseModel):
     def _known_semgrep(cls, mode: str) -> str:
         if mode not in ("auto", "off", "required"):
             raise ValueError("semgrep must be 'auto', 'off' or 'required'")
+        return mode
+
+    @field_validator("tracing")
+    @classmethod
+    def _known_tracing(cls, mode: str) -> str:
+        if mode not in ("none", "otel", "langfuse"):
+            raise ValueError("tracing must be 'none', 'otel' or 'langfuse'")
         return mode
 
     @field_validator("routing")

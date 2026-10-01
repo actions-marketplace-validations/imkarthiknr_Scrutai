@@ -26,6 +26,7 @@ from .config import ScrutaiConfig
 from .llm import LLMClient, LLMError, extract_json
 from .models import DiffContext, Finding, Severity
 from .patch import new_file_lines, window
+from .trace import active as active_tracer
 
 SYSTEM = (
     "You are the critic in a code review panel. You receive ONE finding from a "
@@ -101,6 +102,18 @@ def judge(
 
     f.critic_note = note or decision
     f.history.append(f"round {round_no}: {decision} ({f.confidence:.2f}) {note}".rstrip())
+    tracer = active_tracer()
+    if tracer is not None:
+        tracer.event(
+            "decision",
+            round=round_no,
+            decision=decision,
+            agent=f.agent,
+            category=f.category,
+            where=f"{f.file}:{f.line}",
+            confidence=round(f.confidence, 3),
+            note=note,
+        )
     f.contested = False
     if decision == "kill":
         f.alive = False

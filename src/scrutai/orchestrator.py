@@ -32,6 +32,7 @@ from .diff import chunk_diff
 from .llm import BudgetedClient, LLMClient
 from .models import DiffContext, Finding, ReviewResult, Verdict
 from .router import heuristic_route, route
+from .trace import Tracer, TracingClient, span, traced_node, tracing
 
 
 class ReviewState(TypedDict, total=False):
@@ -66,7 +67,10 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         return sends or "collect"
 
     def specialist_node(task: SpecialistTask) -> ReviewState:
-        return {"raw": REGISTRY[task["agent"]](llm, config).review(task["diff"])}
+        with span("node", "specialist", agent=task["agent"], files=task["diff"].paths) as extra:
+            found = REGISTRY[task["agent"]](llm, config).review(task["diff"])
+            extra["findings"] = len(found)
+        return {"raw": found}
 
     def collect_node(state: ReviewState) -> ReviewState:
         # Branches finish in any order: sort before dedup so ties break the same way.
@@ -107,13 +111,13 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         return {"result": result}
 
     g = StateGraph(ReviewState)
-    g.add_node("route", route_node)
+    g.add_node("route", traced_node("route", route_node))
     # Send-target nodes take their own input type, which LangGraph's stubs can't express.
     g.add_node("specialist", cast(Any, specialist_node))
-    g.add_node("collect", collect_node)
-    g.add_node("critic", critic_node)
-    g.add_node("defend", defend_node)
-    g.add_node("verdict", verdict_node)
+    g.add_node("collect", traced_node("collect", collect_node))
+    g.add_node("critic", traced_node("critic", critic_node))
+    g.add_node("defend", traced_node("defend", defend_node))
+    g.add_node("verdict", traced_node("verdict", verdict_node))
     g.add_edge(START, "route")
     g.add_conditional_edges("route", fan_out, ["specialist", "collect"])
     g.add_edge("specialist", "collect")
@@ -148,12 +152,22 @@ def _summarize(findings: list[Finding], agents: list[str]) -> str:
     return f"{len(findings)} issue(s) upheld. Most severe: {top.title} ({top.severity.value})."
 
 
-def review_diff(diff: DiffContext, config: ScrutaiConfig, llm: LLMClient) -> ReviewResult:
+def review_diff(
+    diff: DiffContext, config: ScrutaiConfig, llm: LLMClient, tracer: Tracer | None = None
+) -> ReviewResult:
     """Review one diff. The entry point the CLI, the Action and the eval harness share."""
     budgeted = BudgetedClient(llm, config.token_budget, config.max_cost_usd)
-    graph = build_graph(budgeted, config)
-    final = graph.invoke({"diff": diff})
-    result: ReviewResult = final["result"]
+    client: LLMClient = TracingClient(budgeted) if tracer is not None else budgeted
+    with tracing(tracer), span("review", "diff", files=len(diff.files)) as extra:
+        graph = build_graph(client, config)
+        final = graph.invoke({"diff": diff})
+        result: ReviewResult = final["result"]
+        extra.update(
+            verdict=result.verdict.value,
+            kept=len(result.findings),
+            dropped=len(result.dropped),
+            tokens=budgeted.tokens_used,
+        )
     if budgeted.exhausted:
         result.budget_exhausted = True
         result.summary += (

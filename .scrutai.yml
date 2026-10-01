@@ -12,6 +12,7 @@ routing: heuristic    # or "llm": the router model may narrow the selection furt
 max_agent_steps: 4    # ReAct budget per specialist (tool calls + final answer)
 semgrep: auto         # auto | off | required
 semgrep_config: bundled   # or any semgrep --config value, e.g. p/default
+tracing: none         # none | otel | langfuse  (and: scrutai review --trace run.jsonl)
 include: ["**/*"]
 exclude: ["**/vendor/**", "**/*.lock", "**/dist/**"]
 models:                 # any LiteLLM model string; cheap router, strong critic
