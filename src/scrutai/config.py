@@ -23,17 +23,13 @@ class AgentModels(BaseModel):
 
 
 class ScrutaiConfig(BaseModel):
-    enabled_agents: list[str] = Field(
-        default_factory=lambda: ["security", "correctness", "tests"]
-    )
+    enabled_agents: list[str] = Field(default_factory=lambda: ["security", "correctness", "tests"])
     # Only findings at or above this severity are posted.
     min_severity: Severity = Severity.LOW
     # Only findings the critic scores at/above this survive.
     min_confidence: float = 0.6
     include: list[str] = Field(default_factory=lambda: ["**/*"])
-    exclude: list[str] = Field(
-        default_factory=lambda: ["**/vendor/**", "**/*.lock", "**/dist/**"]
-    )
+    exclude: list[str] = Field(default_factory=lambda: ["**/vendor/**", "**/*.lock", "**/dist/**"])
     models: AgentModels = Field(default_factory=AgentModels)
     max_critic_rounds: int = 2
     token_budget: int = 200_000
@@ -44,7 +40,7 @@ class ScrutaiConfig(BaseModel):
     llm_mode: str = "mock"
 
     @classmethod
-    def load(cls, path: str | Path = ".scrutai.yml") -> "ScrutaiConfig":
+    def load(cls, path: str | Path = ".scrutai.yml") -> ScrutaiConfig:
         p = Path(path)
         if not p.exists():
             return cls()

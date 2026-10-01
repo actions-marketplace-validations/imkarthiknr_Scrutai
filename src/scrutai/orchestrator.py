@@ -12,7 +12,7 @@ selected ReAct agents. `critic` cross-examines their findings and can loop.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -20,7 +20,7 @@ from .agents import REGISTRY
 from .config import ScrutaiConfig
 from .critic import critique, dedupe
 from .llm import LLMClient
-from .models import DiffContext, Finding, ReviewResult, Severity, Verdict
+from .models import DiffContext, Finding, ReviewResult, Verdict
 
 
 class ReviewState(TypedDict, total=False):
@@ -45,7 +45,7 @@ def _route(diff: DiffContext, config: ScrutaiConfig) -> list[str]:
     return selected or list(config.enabled_agents)
 
 
-def build_graph(llm: LLMClient, config: ScrutaiConfig):
+def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
     def route_node(state: ReviewState) -> ReviewState:
         return {"selected": _route(state["diff"], config), "round": 0, "findings": []}
 
@@ -70,9 +70,7 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig):
 
     def verdict_node(state: ReviewState) -> ReviewState:
         survivors = [
-            f
-            for f in state["findings"]
-            if f.alive and f.severity.rank >= config.min_severity.rank
+            f for f in state["findings"] if f.alive and f.severity.rank >= config.min_severity.rank
         ]
         result = ReviewResult(
             verdict=_decide(survivors, config),
@@ -91,7 +89,9 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig):
     g.add_edge(START, "route")
     g.add_edge("route", "specialists")
     g.add_edge("specialists", "critic")
-    g.add_conditional_edges("critic", _needs_another_round, {"critic": "critic", "verdict": "verdict"})
+    g.add_conditional_edges(
+        "critic", _needs_another_round, {"critic": "critic", "verdict": "verdict"}
+    )
     g.add_edge("verdict", END)
     return g.compile()
 
@@ -118,4 +118,5 @@ def review_diff(diff: DiffContext, config: ScrutaiConfig, llm: LLMClient) -> Rev
     """Convenience entry point used by the CLI and the eval harness."""
     graph = build_graph(llm, config)
     final = graph.invoke({"diff": diff})
-    return final["result"]
+    result: ReviewResult = final["result"]
+    return result

@@ -32,16 +32,20 @@ def _matches(title: str, label: str) -> bool:
     return any(h in title.lower() for h in _LABEL_HINTS.get(label, (label,)))
 
 
-def run_benchmark(path: str, config: ScrutaiConfig) -> dict:
+def run_benchmark(path: str, config: ScrutaiConfig) -> dict[str, float | int]:
     tp = fp = fn = 0
     cases = 0
-    for line in open(path):
+    with open(path) as fh:
+        raw_lines = fh.readlines()
+    for line in raw_lines:
         line = line.strip()
         if not line:
             continue
         case = json.loads(line)
         cases += 1
-        diff = DiffContext(files=[ChangedFile(path=case.get("file", "case.py"), patch=case["patch"])])
+        diff = DiffContext(
+            files=[ChangedFile(path=case.get("file", "case.py"), patch=case["patch"])]
+        )
         # Fresh client per case keeps token accounting per-run honest.
         from ..orchestrator import review_diff
 

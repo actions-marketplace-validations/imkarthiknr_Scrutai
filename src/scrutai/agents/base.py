@@ -32,7 +32,7 @@ class Specialist(ABC):
     def system_prompt(self) -> str:
         return (
             f"You are the {self.name} specialist in a code review panel. {self.role} "
-            "Return ONLY JSON: {\"findings\": [{title, body, severity, confidence, "
+            'Return ONLY JSON: {"findings": [{title, body, severity, confidence, '
             "evidence[]}]}. severity in [info,low,medium,high,critical]; confidence in [0,1]."
         )
 

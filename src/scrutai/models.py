@@ -7,12 +7,12 @@ eval harness measurable.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
@@ -25,7 +25,7 @@ class Severity(str, Enum):
         return order.index(self.value)
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     APPROVE = "approve"
     COMMENT = "comment"
     REQUEST_CHANGES = "request_changes"
@@ -54,7 +54,7 @@ class DiffContext(BaseModel):
 class Finding(BaseModel):
     """A single issue raised by a specialist and judged by the critic."""
 
-    agent: str                      # which specialist raised it
+    agent: str  # which specialist raised it
     title: str
     body: str
     file: str

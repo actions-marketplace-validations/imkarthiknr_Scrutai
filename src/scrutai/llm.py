@@ -55,40 +55,39 @@ class MockLLMClient:
             )
 
         # --- specialist role: propose findings for the diff ---
-        findings: list[dict] = []
-        if "security" in system.lower():
-            if "eval(" in text or "subprocess" in text or "os.system" in text:
-                findings.append(
-                    {
-                        "title": "Possible command/eval injection",
-                        "body": "Untrusted input reaches a dynamic execution sink.",
-                        "severity": "high",
-                        "confidence": 0.7,
-                        "evidence": ["grep matched a dynamic-execution call in the diff"],
-                    }
-                )
-        if "correctness" in system.lower():
-            if "except:" in text or "except exception" in text:
-                findings.append(
-                    {
-                        "title": "Overly broad exception handler",
-                        "body": "Bare/broad except swallows errors and hides bugs.",
-                        "severity": "medium",
-                        "confidence": 0.65,
-                        "evidence": ["diff adds a broad except clause"],
-                    }
-                )
-        if "test" in system.lower():
-            if "def " in text and "test_" not in text:
-                findings.append(
-                    {
-                        "title": "New logic added without tests",
-                        "body": "Changed function has no accompanying test in the diff.",
-                        "severity": "low",
-                        "confidence": 0.55,
-                        "evidence": ["no test_* additions found for the changed symbol"],
-                    }
-                )
+        findings: list[dict[str, object]] = []
+        if "security" in system.lower() and (
+            "eval(" in text or "subprocess" in text or "os.system" in text
+        ):
+            findings.append(
+                {
+                    "title": "Possible command/eval injection",
+                    "body": "Untrusted input reaches a dynamic execution sink.",
+                    "severity": "high",
+                    "confidence": 0.7,
+                    "evidence": ["grep matched a dynamic-execution call in the diff"],
+                }
+            )
+        if "correctness" in system.lower() and ("except:" in text or "except exception" in text):
+            findings.append(
+                {
+                    "title": "Overly broad exception handler",
+                    "body": "Bare/broad except swallows errors and hides bugs.",
+                    "severity": "medium",
+                    "confidence": 0.65,
+                    "evidence": ["diff adds a broad except clause"],
+                }
+            )
+        if "test" in system.lower() and "def " in text and "test_" not in text:
+            findings.append(
+                {
+                    "title": "New logic added without tests",
+                    "body": "Changed function has no accompanying test in the diff.",
+                    "severity": "low",
+                    "confidence": 0.55,
+                    "evidence": ["no test_* additions found for the changed symbol"],
+                }
+            )
         return json.dumps({"findings": findings})
 
 

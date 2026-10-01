@@ -39,9 +39,7 @@ def _judge(llm: LLMClient, config: ScrutaiConfig, finding: Finding) -> Finding:
     return finding
 
 
-def critique(
-    llm: LLMClient, config: ScrutaiConfig, findings: list[Finding]
-) -> list[Finding]:
+def critique(llm: LLMClient, config: ScrutaiConfig, findings: list[Finding]) -> list[Finding]:
     """Run one round of cross-examination over all findings.
 
     The graph may call this more than once (see orchestrator's loop edge); a
@@ -53,7 +51,7 @@ def critique(
 
 def dedupe(findings: list[Finding]) -> list[Finding]:
     """Collapse the same issue raised by multiple agents, keeping the strongest."""
-    best: dict[tuple, Finding] = {}
+    best: dict[tuple[str, str, int | None], Finding] = {}
     for f in findings:
         cur = best.get(f.key())
         if cur is None or f.confidence > cur.confidence:

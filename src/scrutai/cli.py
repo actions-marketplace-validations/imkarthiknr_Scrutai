@@ -1,8 +1,8 @@
 """`scrutai` command line.
 
-    scrutai review --base main            # review working branch vs main
-    scrutai review --demo                 # run on the bundled sample diff
-    scrutai eval                          # run the benchmark, print precision/FPR
+scrutai review --base main            # review working branch vs main
+scrutai review --demo                 # run on the bundled sample diff
+scrutai eval                          # run the benchmark, print precision/FPR
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from rich.table import Table
 from .config import ScrutaiConfig
 from .diff import diff_from_git
 from .llm import make_client
-from .models import ChangedFile, DiffContext
+from .models import ChangedFile, DiffContext, ReviewResult
 from .orchestrator import review_diff
 
 app = typer.Typer(add_completion=False, help="Multi-agent code review with an adversarial critic.")
@@ -40,9 +40,11 @@ _DEMO_DIFF = DiffContext(
 )
 
 
-def _render(result) -> None:
-    console.print(f"[bold]Verdict:[/bold] {result.verdict.value}   "
-                  f"[dim]rounds={result.rounds} tokens={result.tokens_used}[/dim]")
+def _render(result: ReviewResult) -> None:
+    console.print(
+        f"[bold]Verdict:[/bold] {result.verdict.value}   "
+        f"[dim]rounds={result.rounds} tokens={result.tokens_used}[/dim]"
+    )
     console.print(f"[italic]{result.summary}[/italic]\n")
     if not result.findings:
         return

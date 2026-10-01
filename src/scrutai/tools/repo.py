@@ -13,9 +13,7 @@ from pathlib import Path
 
 def _run(args: list[str], cwd: str = ".") -> str:
     try:
-        out = subprocess.run(
-            args, cwd=cwd, capture_output=True, text=True, timeout=30, check=False
-        )
+        out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=30, check=False)
         return out.stdout
     except (subprocess.SubprocessError, FileNotFoundError):
         return ""
@@ -37,9 +35,7 @@ def grep(pattern: str, repo_root: str = ".") -> list[str]:
 
 def git_blame(path: str, line: int, repo_root: str = ".") -> str:
     """Blame a single line so an agent can see who/when introduced context."""
-    out = _run(
-        ["git", "blame", "-L", f"{line},{line}", "--", path], cwd=repo_root
-    )
+    out = _run(["git", "blame", "-L", f"{line},{line}", "--", path], cwd=repo_root)
     return out.strip()
 
 
