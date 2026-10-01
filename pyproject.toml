@@ -1,6 +1,6 @@
 [project]
 name = "scrutai"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-agent code reviewer that puts every finding on trial before it reaches your PR."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -7,6 +7,8 @@
 ![python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 
+![The agent theater mid-review: the critic in round 1, the defend loop active, three findings on trial](docs/images/theater.png)
+
 Scrutai is a **multi-agent code reviewer**. Instead of one model making one pass over a diff, it runs a
 panel of specialist agents (each a ReAct agent grounded in the *real repository* through tools) and then
 puts every finding on trial before an adversarial **critic** that challenges, downgrades, or kills it.
@@ -46,6 +48,7 @@ scrutai review --diff change.patch         # a patch file ('-' reads stdin)
 scrutai review --pr 128 --post             # a GitHub PR; posts summary + inline comments
 scrutai review --base main -f sarif -o scrutai.sarif   # for GitHub code scanning
 scrutai review --base main --trace run.jsonl           # every node, LLM call, tool call, verdict
+scrutai serve                              # the agent theater at http://127.0.0.1:8765
 ```
 
 Exit codes: `0` clean, `1` a finding at or above `fail_on`, `2` usage / diff / API error.
@@ -70,6 +73,51 @@ Exit codes: `0` clean, `1` a finding at or above `fail_on`, `2` usage / diff / A
 - **verdict**: a typed `ReviewResult`: findings, verdict, dropped findings with reasons, tokens, cost.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design rationale.
+
+## Agent theater (`scrutai serve`)
+
+```bash
+pip install "scrutai[web]"
+scrutai serve                       # http://127.0.0.1:8765
+scrutai serve --replay run.jsonl    # open a recorded --trace as a run
+```
+
+A React UI over the live trace stream. Start a review from the browser (demo, git range, pasted
+patch or PR) and watch it happen: the graph lights up as the router picks specialists and each
+one works through its chunks. On the **trial board**, every finding moves from *On trial* to
+*Upheld* or *Killed* with its full story: who raised it, the critic's challenge, the specialist's
+defense or withdrawal, and the final ruling. Finished runs can be replayed at 1×/4×/16× or scrubbed
+event by event, and any saved `--trace` file plays back exactly like a live run.
+
+The server binds to `127.0.0.1` by default: it can read your repository and spend your API budget.
+The built UI ships inside the Python package; Node is only needed to develop it (`web/`).
+
+## Framework backends (CrewAI)
+
+```yaml
+backends: {security: crewai}   # one agent on CrewAI...
+backends: {"*": crewai}        # ...or all of them
+```
+
+Every specialist implements one seam, `Specialist._loop` (its ReAct loop). The CrewAI backend
+overrides only that: a CrewAI `Agent` + `Task` + `Crew` runs the loop, Scrutai's sandboxed tools
+are exposed as CrewAI tools, and the model is reached through a bridge LLM that wraps Scrutai's own
+client, so budgets, cost tracking, tracing and mock/live mode all still apply. Prompts, parsing and
+the critic debate are shared, which makes the comparison fair:
+
+```bash
+pip install "scrutai[crewai]"
+scrutai eval --compare crewai
+```
+
+| metric (50-case benchmark, mock mode) | native | crewai |
+|---|---|---|
+| precision / recall | 1.00 / 0.90 | 1.00 / 0.90 |
+| per-case agreement | | **100%** |
+| wall time | 0.6 s | 31.8 s |
+
+Same answers on every case. CrewAI adds roughly 150 ms of orchestration overhead per agent run,
+which is noise next to real model latency but visible against the instant mock model.
 
 ## Benchmark
 
@@ -131,6 +179,7 @@ max_critic_rounds: 2       # 1 disables the debate
 max_agent_steps: 4         # ReAct budget per specialist
 chunk_lines: 250           # added lines per chunk; 0 = whole diff at once
 concurrency: 4             # parallel critic / defense calls
+backends: {}               # per-agent framework: {security: crewai} or {"*": crewai}
 token_budget: 200000       # hard cap per review; partial results are flagged
 max_cost_usd: 0.0          # optional dollar cap (live); 0 disables
 fail_on: high              # exit 1 (fail CI) at this severity
@@ -147,7 +196,8 @@ models:                    # any LiteLLM model string
   critic: anthropic/claude-opus-5-5
 ```
 
-Optional extras: `pip install "scrutai[semgrep]"`, `"scrutai[otel]"`, `"scrutai[langfuse]"`.
+Optional extras: `pip install "scrutai[web]"`, `"scrutai[crewai]"`, `"scrutai[semgrep]"`,
+`"scrutai[otel]"`, `"scrutai[langfuse]"`.
 
 ## Library use
 
@@ -169,7 +219,8 @@ for f in result.findings:
 
 ```bash
 uv sync --extra dev
-uv run pytest -q            # 120+ tests, fully offline
+uv run pytest -q            # 150+ tests incl. browser E2E, fully offline
+cd web && npm ci && npm test && npm run build   # UI: vitest + bundle into the package
 uv run ruff check . && uv run ruff format --check . && uv run mypy src
 ```
 
@@ -178,8 +229,9 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy src
 - **v0.1**: CLI, ReAct specialists, critic, eval harness. ✅
 - **v0.2**: GitHub Action (idempotent inline comments, SARIF), Semgrep, Performance/Style agents,
   tracing (JSONL / OpenTelemetry / Langfuse), cost budget guardrail, chunked parallel review. ✅
-- **v0.3**: web UI ("agent theater") visualizing the live graph from a trace, and a second framework
-  adapter (CrewAI/ADK) behind the `Specialist` interface.
+- **v0.3**: agent theater web UI (live + replay), CrewAI backend behind the `Specialist` seam,
+  `eval --compare`. ✅
+- **Next**: published live-model benchmark numbers; a Google ADK backend; Semgrep taint rules.
 
 ## License
 

@@ -108,13 +108,29 @@ start, and reviewed code is always prefixed with `L<n>:`, so diff content cannot
 
 ## The framework seam
 
-Specialists implement one `Specialist` interface (`review()`, and `defend()` for the debate). v0.x
-wires the graph with LangGraph and runs native ReAct agents, but the interface is the seam that lets a
-CrewAI- or ADK-backed specialist drop in later (v0.3) without touching the graph.
+Specialists share everything except one method: `Specialist._loop`, the ReAct loop that both
+`review()` and the debate's `defend()` run. Prompts, tools, finding parsing and the critic are
+common code. The CrewAI backend overrides only `_loop`: a CrewAI `Agent` + `Task` + `Crew` drives
+the Thought / Action / Observation cycle, Scrutai's sandboxed tools are wrapped as CrewAI
+`BaseTool`s, and the model is reached through `BridgeLLM`, a CrewAI `BaseLLM` that translates
+CrewAI's text protocol to Scrutai's JSON protocol and calls Scrutai's own client.
 
-## Observability
+Routing the model through the bridge (rather than letting CrewAI call a provider directly) is the
+deliberate choice: budget caps, cost accounting, tracing and mock mode keep working, and a
+native-vs-CrewAI comparison holds model and protocol constant, so `eval --compare` measures the
+framework and nothing else. CrewAI's telemetry is disabled; a code reviewer must not send data
+anywhere it wasn't told to.
+
+## Observability and the agent theater
 
 `--trace run.jsonl` records every node, LLM call (role, model, tokens, latency), tool call and critic
-decision. The same spans go to OpenTelemetry (`tracing: otel`), and live LLM calls can be logged to
-Langfuse through LiteLLM (`tracing: langfuse`). The planned v0.3 "agent theater" UI is a replay of this
-trace.
+decision. Spans emit start and end events, every event carries the run id and a sequence number,
+and point events record the run plan, each finding as raised, each decision and each defense. The
+same spans go to OpenTelemetry (`tracing: otel`), and live LLM calls can be logged to Langfuse
+through LiteLLM (`tracing: langfuse`).
+
+`scrutai serve` streams those events to the browser over Server-Sent Events. The React UI derives
+everything it draws from one pure `reduce(events)` function, so a live run, a replayed trace and a
+scrubbed position render identically, and the UI is unit-tested against a real recorded trace.
+Writing that reducer exposed two backend bugs: per-call token counts double-counting under
+concurrency, and defenses being reported as withdrawals.

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+- Agent theater: `scrutai serve` (FastAPI + Server-Sent Events) and a React UI with the live review
+  graph, a trial board following each finding from raised to upheld/killed, run history, trace
+  upload, playback and scrubbing (`pip install "scrutai[web]"`).
+- CrewAI backend behind the `Specialist._loop` seam, per agent via `backends:`
+  (`pip install "scrutai[crewai]"`), and `scrutai eval --compare crewai`.
+- Richer traces: run ids, sequence numbers, span start events, plan / finding / defense / result
+  events.
+
+### Fixed
+- Per-call token counts in traces double-counted concurrent calls.
+- Defense outcomes in traces reported defended findings as withdrawn.
+- Git refs are validated so a ref can never be read as a git option.
+
 ## 0.2.0
 
 ### Added
