@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from enum import StrEnum
 from pathlib import Path
 
@@ -20,10 +19,11 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from .config import ScrutaiConfig
+from .demo import review_demo
 from .diff import DiffError, apply_filters, diff_from_file, diff_from_git, parse_diff
 from .github import GitHubClient, GitHubError, PullRequest, detect_repo, publish
 from .llm import make_client
-from .models import ChangedFile, DiffContext, ReviewResult
+from .models import ReviewResult
 from .orchestrator import review_diff
 from .report import location, to_markdown, to_sarif_json
 from .tools.semgrep import available as semgrep_available
@@ -31,21 +31,6 @@ from .trace import Tracer, enable_langfuse
 
 app = typer.Typer(add_completion=False, help="Multi-agent code review with an adversarial critic.")
 console = Console()
-
-# The demo: real issues plus planted noise, so the critic has something to kill.
-_DEMO_FILE = "app/runner.py"
-_DEMO_SOURCE = """\
-import os
-
-
-def run(cmd, env={}):
-    # never pass user input to os.system(...) unescaped
-    try:
-        return os.system(cmd)
-    except Exception:
-        print("failed", cmd)
-        return -1
-"""
 
 
 class Format(StrEnum):
@@ -115,17 +100,6 @@ def _make_tracer(config: ScrutaiConfig, path: str | None) -> Tracer | None:
         raise typer.Exit(code=2) from exc
 
 
-def _review_demo(config: ScrutaiConfig, tracer: Tracer | None = None) -> ReviewResult:
-    # A throwaway repo so the agents' tools see the demo file, not your cwd.
-    with tempfile.TemporaryDirectory(prefix="scrutai-demo-") as root:
-        target = Path(root) / _DEMO_FILE
-        target.parent.mkdir(parents=True)
-        target.write_text(_DEMO_SOURCE)
-        patch = "".join(f"+{line}\n" for line in _DEMO_SOURCE.splitlines())
-        diff = DiffContext(repo_root=root, files=[ChangedFile(path=_DEMO_FILE, patch=patch)])
-        return review_diff(diff, config, make_client(config.llm_mode), tracer)
-
-
 @app.command()
 def review(
     base: str = typer.Option("main", help="Base ref to diff against."),
@@ -160,7 +134,7 @@ def review(
     gh: tuple[GitHubClient, PullRequest] | None = None
     tracer = _make_tracer(config, trace)
     if demo:
-        result = _review_demo(config, tracer)
+        result = review_demo(config, tracer)
     else:
         try:
             if pr is not None:
@@ -209,6 +183,44 @@ def _load_config(path: str) -> ScrutaiConfig:
         console.print("[red]semgrep: required by config but not installed[/red]")
         raise typer.Exit(code=2)
     return config
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Interface to bind (keep it local)."),
+    port: int = typer.Option(8765, help="Port."),
+    repo: str = typer.Option(".", help="Repo root for git-range and PR runs."),
+    replay: str | None = typer.Option(None, help="Preload a --trace JSONL file as a run."),
+    config_path: str = typer.Option(".scrutai.yml", "--config"),
+) -> None:
+    """Open the agent theater: start reviews and watch the panel work, live."""
+    _load_config(config_path)  # fail fast on a bad config
+    try:
+        import uvicorn
+
+        from .web.server import Run, RunStore, create_app, load_trace
+    except ImportError as exc:
+        console.print('[red]The web UI needs extras:[/red] pip install "scrutai[web]"')
+        raise typer.Exit(code=2) from exc
+
+    store = RunStore()
+    if replay:
+        try:
+            events = load_trace(Path(replay).read_text())
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Cannot replay {replay}:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+        run = Run(id=str(events[0].get("run", "replay")), source="replay", label=Path(replay).name)
+        for e in events:
+            run.append(e)
+        run.status = "done"
+        store.add(run)
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(
+            "[yellow]Warning:[/yellow] binding beyond localhost exposes your repo and API budget."
+        )
+    console.print(f"Scrutai theater on [bold]http://{host}:{port}[/bold]  (Ctrl+C to stop)")
+    uvicorn.run(create_app(config_path, repo, store), host=host, port=port, log_level="warning")
 
 
 @app.command("eval")

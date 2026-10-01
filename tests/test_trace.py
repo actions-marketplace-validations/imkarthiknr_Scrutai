@@ -33,7 +33,17 @@ def test_jsonl_trace_covers_nodes_llm_tools_and_decisions(tmp_path: Path) -> Non
     tracer.close()
     events = _events(path)
     kinds = {e["kind"] for e in events}
-    assert kinds == {"node", "llm", "tool", "decision", "review", "plan", "finding", "defense"}
+    assert kinds == {
+        "node",
+        "llm",
+        "tool",
+        "decision",
+        "review",
+        "plan",
+        "finding",
+        "defense",
+        "result",
+    }
     nodes = [e["name"] for e in events if e["kind"] == "node" and e["phase"] == "end"]
     assert nodes[0] == "route" and nodes[-1] == "verdict" and "critic" in nodes
     final = events[-1]

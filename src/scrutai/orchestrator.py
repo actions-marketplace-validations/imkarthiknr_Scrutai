@@ -184,6 +184,7 @@ def review_diff(
         graph = build_graph(client, config)
         final = graph.invoke({"diff": diff})
         result: ReviewResult = final["result"]
+        emit("result", result=result.model_dump(mode="json"))
         extra.update(
             verdict=result.verdict.value,
             kept=len(result.findings),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,8 +23,20 @@ def parse_diff(text: str, repo_root: str = ".", base: str = "", head: str = "") 
     return DiffContext(repo_root=repo_root, base_ref=base, head_ref=head, files=files)
 
 
+_REF = re.compile(r"^[\w][\w./@^~{}-]*$")
+
+
+def validate_ref(ref: str) -> str:
+    """Reject anything git could read as an option (`--output=...`) or a range trick."""
+    if not _REF.match(ref) or ".." in ref:
+        raise DiffError(f"invalid git ref {ref!r}")
+    return ref
+
+
 def diff_from_git(base: str, head: str, repo_root: str = ".") -> DiffContext:
     """Diff `base...head` (merge-base semantics, like a PR) in one git call."""
+    validate_ref(base)
+    validate_ref(head)
     try:
         proc = subprocess.run(
             ["git", "diff", "--no-color", "--no-ext-diff", "-M", f"{base}...{head}"],
