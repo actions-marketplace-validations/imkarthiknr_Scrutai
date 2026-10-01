@@ -1,13 +1,16 @@
 """`scrutai` command line.
 
-scrutai review --base main            # review working branch vs main
-scrutai review --demo                 # run on the bundled sample diff
-scrutai eval                          # run the benchmark, print precision/FPR
+scrutai review --base main                # review working branch vs main
+scrutai review --demo                     # run on the bundled sample diff
+scrutai review --diff pr.patch -f sarif   # review a patch file, emit SARIF
+scrutai eval --min-precision 0.9          # run the benchmark as a CI gate
 """
 
 from __future__ import annotations
 
 import json
+import tempfile
+from enum import StrEnum
 from pathlib import Path
 
 import typer
@@ -20,29 +23,36 @@ from .diff import DiffError, apply_filters, diff_from_file, diff_from_git
 from .llm import make_client
 from .models import ChangedFile, DiffContext, ReviewResult
 from .orchestrator import review_diff
+from .report import location, to_markdown, to_sarif_json
 from .tools.semgrep import available as semgrep_available
 
 app = typer.Typer(add_completion=False, help="Multi-agent code review with an adversarial critic.")
 console = Console()
 
-_DEMO_DIFF = DiffContext(
-    files=[
-        ChangedFile(
-            path="app/runner.py",
-            patch=(
-                "+def run(cmd):\n"
-                "+    import os\n"
-                "+    try:\n"
-                "+        return os.system(cmd)\n"
-                "+    except Exception:\n"
-                "+        return -1\n"
-            ),
-        )
-    ]
-)
+# The demo: real issues plus planted noise, so the critic has something to kill.
+_DEMO_FILE = "app/runner.py"
+_DEMO_SOURCE = """\
+import os
 
 
-def _render(result: ReviewResult) -> None:
+def run(cmd, env={}):
+    # never pass user input to os.system(...) unescaped
+    try:
+        return os.system(cmd)
+    except Exception:
+        print("failed", cmd)
+        return -1
+"""
+
+
+class Format(StrEnum):
+    table = "table"
+    json = "json"
+    markdown = "markdown"
+    sarif = "sarif"
+
+
+def _render_table(result: ReviewResult, show_dropped: bool) -> None:
     console.print(
         f"[bold]Verdict:[/bold] {result.verdict.value}   "
         f"[dim]agents={','.join(result.agents) or '-'} rounds={result.rounds} "
@@ -51,18 +61,54 @@ def _render(result: ReviewResult) -> None:
     console.print(f"[italic]{result.summary}[/italic]")
     if result.budget_exhausted:
         console.print("[yellow]Budget exhausted: this review is partial.[/yellow]")
-    if result.dropped:
-        console.print(f"[dim]The critic dropped {len(result.dropped)} finding(s).[/dim]")
+    if result.dropped and not show_dropped:
+        console.print(
+            f"[dim]The critic dropped {len(result.dropped)} finding(s); "
+            "--show-dropped to see them.[/dim]"
+        )
     console.print()
-    if not result.findings:
+    if result.findings:
+        table = Table(show_lines=False)
+        for col in ("Severity", "Agent", "Conf", "File:Line", "Finding"):
+            table.add_column(col)
+        for f in result.findings:
+            table.add_row(f.severity.value, f.agent, f"{f.confidence:.2f}", location(f), f.title)
+        console.print(table)
+    if show_dropped and result.dropped:
+        table = Table(title="Dropped by the critic", show_lines=False)
+        for col in ("Agent", "File:Line", "Finding", "Why"):
+            table.add_column(col)
+        for f in result.dropped:
+            table.add_row(f.agent, location(f), f.title, f.critic_note or "")
+        console.print(table)
+
+
+def _emit(result: ReviewResult, fmt: Format, output: str | None, show_dropped: bool) -> None:
+    if fmt == Format.table and not output:
+        _render_table(result, show_dropped)
         return
-    table = Table(show_lines=False)
-    for col in ("Severity", "Agent", "Conf", "File:Line", "Finding"):
-        table.add_column(col)
-    for f in result.findings:
-        loc = f"{f.file}:{f.line}" if f.line else f.file
-        table.add_row(f.severity.value, f.agent, f"{f.confidence:.2f}", loc, f.title)
-    console.print(table)
+    if fmt == Format.json:
+        text = result.model_dump_json(indent=2)
+    elif fmt == Format.sarif:
+        text = to_sarif_json(result)
+    else:  # markdown (also what --output gets when the format is "table")
+        text = to_markdown(result, show_dropped)
+    if output:
+        Path(output).write_text(text + ("" if text.endswith("\n") else "\n"))
+        console.print(f"[dim]Wrote {fmt.value} report to {output}[/dim]")
+    else:
+        typer.echo(text)
+
+
+def _review_demo(config: ScrutaiConfig) -> ReviewResult:
+    # A throwaway repo so the agents' tools see the demo file, not your cwd.
+    with tempfile.TemporaryDirectory(prefix="scrutai-demo-") as root:
+        target = Path(root) / _DEMO_FILE
+        target.parent.mkdir(parents=True)
+        target.write_text(_DEMO_SOURCE)
+        patch = "".join(f"+{line}\n" for line in _DEMO_SOURCE.splitlines())
+        diff = DiffContext(repo_root=root, files=[ChangedFile(path=_DEMO_FILE, patch=patch)])
+        return review_diff(diff, config, make_client(config.llm_mode))
 
 
 @app.command()
@@ -74,34 +120,49 @@ def review(
     diff_file: str | None = typer.Option(
         None, "--diff", help="Review a unified diff file instead of git ('-' reads stdin)."
     ),
-    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    fmt: Format = typer.Option(Format.table, "--format", "-f", help="Output format."),
+    output_json: bool = typer.Option(False, "--json", help="Shorthand for --format json."),
+    output: str | None = typer.Option(None, "--output", "-o", help="Write the report to a file."),
+    show_dropped: bool = typer.Option(False, help="Also list findings the critic killed."),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
-    config = ScrutaiConfig.load(config_path)
+    """Review a git range, a patch file, or the bundled demo.
+
+    Exit codes: 0 ok, 1 a finding at or above fail_on, 2 usage/diff error.
+    """
+    config = _load_config(config_path)
+    if output_json:
+        fmt = Format.json
+    if demo:
+        result = _review_demo(config)
+    else:
+        try:
+            diff = (
+                diff_from_file(diff_file, repo_root=repo)
+                if diff_file
+                else diff_from_git(base, head, repo)
+            )
+        except DiffError as exc:
+            console.print(f"[red]Could not build diff:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+        diff = apply_filters(diff, config.include, config.exclude)
+        result = review_diff(diff, config, make_client(config.llm_mode))
+
+    _emit(result, fmt, output, show_dropped)
+    if any(f.severity.rank >= config.fail_on.rank for f in result.findings):
+        raise typer.Exit(code=1)
+
+
+def _load_config(path: str) -> ScrutaiConfig:
+    try:
+        config = ScrutaiConfig.load(path)
+    except (ValueError, OSError) as exc:  # pydantic ValidationError is a ValueError
+        console.print(f"[red]Invalid config {path}:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
     if config.semgrep == "required" and not semgrep_available():
         console.print("[red]semgrep: required by config but not installed[/red]")
         raise typer.Exit(code=2)
-    llm = make_client(config.llm_mode)
-    try:
-        if demo:
-            diff = _DEMO_DIFF
-        elif diff_file:
-            diff = diff_from_file(diff_file, repo_root=repo)
-        else:
-            diff = diff_from_git(base, head, repo)
-    except DiffError as exc:
-        console.print(f"[red]Could not build diff:[/red] {exc}")
-        raise typer.Exit(code=2) from exc
-    diff = apply_filters(diff, config.include, config.exclude)
-    result = review_diff(diff, config, llm)
-
-    if output_json:
-        console.print_json(result.model_dump_json())
-    else:
-        _render(result)
-
-    if any(f.severity.rank >= config.fail_on.rank for f in result.findings):
-        raise typer.Exit(code=1)
+    return config
 
 
 @app.command("eval")
@@ -121,7 +182,7 @@ def eval_cmd(
         raise typer.Exit(code=2)
     details: list[CaseResult] = []
     try:
-        metrics = run_benchmark(benchmark, ScrutaiConfig.load(config_path), details)
+        metrics = run_benchmark(benchmark, _load_config(config_path), details)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from exc

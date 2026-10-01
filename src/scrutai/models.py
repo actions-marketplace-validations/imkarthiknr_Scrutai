@@ -7,6 +7,7 @@ eval harness measurable.
 
 from __future__ import annotations
 
+import hashlib
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -158,6 +159,17 @@ class Finding(BaseModel):
     history: list[str] = Field(default_factory=list)
     # True when the critic could not judge it (error/budget); such findings are dropped.
     unjudged: bool = False
+
+    def fingerprint(self) -> str:
+        """Stable id across pushes: ignores the line number, which shifts as code moves.
+
+        Used for SARIF partialFingerprints and idempotent PR comments.
+        """
+        what = self.category if self.category != "general" else self.title.strip().lower()
+        cited = next((e for e in self.evidence if e.startswith("L") and ": " in e), "")
+        code = " ".join(cited.split(": ", 1)[1].split()) if cited else ""
+        raw = f"{self.file}|{what}|{code}"
+        return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
     def key(self) -> tuple[str, int | None, str]:
         """Identity used for deduplication across agents.
