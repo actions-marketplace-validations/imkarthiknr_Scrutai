@@ -161,6 +161,8 @@ class ReviewResult(BaseModel):
     tokens_used: int = 0
     cost_usd: float = 0.0
     rounds: int = 0
+    # Which specialists the router woke for this diff.
+    agents: list[str] = Field(default_factory=list)
 
     def by_severity(self) -> dict[str, int]:
         counts: dict[str, int] = {}

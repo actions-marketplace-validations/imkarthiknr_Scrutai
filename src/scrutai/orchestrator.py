@@ -4,8 +4,8 @@
                                        |
                                        +--(stable)--> verdict -> END
 
-`route` inspects the diff and selects only relevant specialists (smart routing
-= a cost lever and a sign of judgement). `specialists` fans the diff out to the
+`route` inspects the diff and selects only relevant specialists (see router.py;
+a docs-only change wakes nobody). `specialists` fans the diff out to the
 selected ReAct agents. `critic` cross-examines their findings and can loop.
 `verdict` assembles the typed ReviewResult.
 """
@@ -21,6 +21,7 @@ from .config import ScrutaiConfig
 from .critic import critique, dedupe
 from .llm import LLMClient
 from .models import DiffContext, Finding, ReviewResult, Verdict
+from .router import route
 
 
 class ReviewState(TypedDict, total=False):
@@ -31,23 +32,9 @@ class ReviewState(TypedDict, total=False):
     result: ReviewResult
 
 
-def _route(diff: DiffContext, config: ScrutaiConfig) -> list[str]:
-    """Pick specialists worth running for this diff. Cheap heuristics now; an
-    LLM router later. A docs-only or lockfile-only change wakes nobody."""
-    blob = "\n".join(f.patch for f in diff.files).lower()
-    selected: list[str] = []
-    for name in config.enabled_agents:
-        if name == "security" and not any(
-            s in blob for s in ("eval(", "subprocess", "os.system", "pickle", "token", "password")
-        ):
-            continue
-        selected.append(name)
-    return selected or list(config.enabled_agents)
-
-
 def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
     def route_node(state: ReviewState) -> ReviewState:
-        return {"selected": _route(state["diff"], config), "round": 0, "findings": []}
+        return {"selected": route(state["diff"], config, llm), "round": 0, "findings": []}
 
     def specialists_node(state: ReviewState) -> ReviewState:
         # Fan-out: run each selected specialist over the diff. (v0.2: parallelize
@@ -75,9 +62,10 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         result = ReviewResult(
             verdict=_decide(survivors, config),
             findings=sorted(survivors, key=lambda f: -f.severity.rank),
-            summary=_summarize(survivors),
+            summary=_summarize(survivors, state.get("selected", [])),
             tokens_used=llm.tokens_used,
             rounds=state.get("round", 0),
+            agents=state.get("selected", []),
         )
         return {"result": result}
 
@@ -107,7 +95,9 @@ def _decide(findings: list[Finding], config: ScrutaiConfig) -> Verdict:
     return Verdict.COMMENT if findings else Verdict.APPROVE
 
 
-def _summarize(findings: list[Finding]) -> str:
+def _summarize(findings: list[Finding], agents: list[str]) -> str:
+    if not agents:
+        return "No reviewable code changed (docs, lockfiles or assets only). Nothing to review."
     if not findings:
         return "No issues survived cross-examination. Looks clean."
     top = findings[0]

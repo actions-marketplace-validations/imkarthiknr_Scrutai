@@ -9,7 +9,37 @@ harness, which compares models) and lets every test run offline against
 from __future__ import annotations
 
 import json
-from typing import Protocol, runtime_checkable
+import re
+from typing import Any, Protocol, runtime_checkable
+
+
+class LLMError(RuntimeError):
+    """A provider call failed (network, auth, rate limit, empty response)."""
+
+
+_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+def extract_json(raw: str) -> dict[str, Any]:
+    """Parse the JSON object in a model reply.
+
+    Real models wrap JSON in ```json fences or add a sentence before it; accept
+    both. Raises json.JSONDecodeError if no object can be recovered.
+    """
+    text = raw.strip()
+    fenced = _FENCE.search(text)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        value = json.loads(text[start : end + 1])
+    if not isinstance(value, dict):
+        raise json.JSONDecodeError("expected a JSON object", text, 0)
+    return value
 
 
 @runtime_checkable

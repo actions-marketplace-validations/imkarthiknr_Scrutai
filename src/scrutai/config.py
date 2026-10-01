@@ -38,6 +38,9 @@ class ScrutaiConfig(BaseModel):
     # "mock" runs the whole pipeline offline with canned findings; "live" calls
     # a real provider via LiteLLM.
     llm_mode: str = "mock"
+    # "heuristic" (free, deterministic) or "llm" (the router model may narrow
+    # the heuristic selection further; it can never add agents).
+    routing: str = "heuristic"
 
     @classmethod
     def load(cls, path: str | Path = ".scrutai.yml") -> ScrutaiConfig:

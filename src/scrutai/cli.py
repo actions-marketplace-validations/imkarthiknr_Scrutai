@@ -43,7 +43,8 @@ _DEMO_DIFF = DiffContext(
 def _render(result: ReviewResult) -> None:
     console.print(
         f"[bold]Verdict:[/bold] {result.verdict.value}   "
-        f"[dim]rounds={result.rounds} tokens={result.tokens_used}[/dim]"
+        f"[dim]agents={','.join(result.agents) or '-'} rounds={result.rounds} "
+        f"tokens={result.tokens_used}[/dim]"
     )
     console.print(f"[italic]{result.summary}[/italic]\n")
     if not result.findings:
