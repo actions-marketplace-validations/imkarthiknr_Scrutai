@@ -1,71 +1,142 @@
 """The Specialist interface — the seam that keeps the system framework-agnostic.
 
-Every specialist is a ReAct-style agent: it gathers context with real tools,
-reasons via the LLM, and proposes typed Findings. The orchestrator and critic
-depend only on this interface, so a CrewAI- or ADK-backed specialist can be
-dropped in later without touching the graph.
+Every specialist is a ReAct agent: it reads the diff, *acts* through real repo
+tools (read_file / grep / git_blame / ...), *observes* the results, and repeats
+until it can propose typed Findings or its step budget runs out. The
+orchestrator and critic depend only on `review()` (and `defend()` during the
+critic debate), so a CrewAI- or ADK-backed specialist can override those and
+drop in without touching the graph.
+
+Protocol (one JSON object per model turn):
+    {"thought": "...", "action": {"tool": "grep", "args": {"pattern": "eval("}}}
+    {"thought": "...", "findings": [{title, body, file, line, category, ...}]}
 """
 
 from __future__ import annotations
 
 import json
-from abc import ABC, abstractmethod
+from typing import Any, ClassVar
 
 from ..config import ScrutaiConfig
-from ..llm import LLMClient
-from ..models import DiffContext, Finding, Severity
+from ..llm import LLMClient, LLMError, extract_json
+from ..models import ChangedFile, DiffContext, Finding, Severity
+from ..tools import Toolbox
 
 
-class Specialist(ABC):
-    name: str = "specialist"
+class Specialist:
+    name: ClassVar[str] = "specialist"
     #: One-line role description injected into the system prompt.
-    role: str = ""
+    role: ClassVar[str] = ""
+    #: Issue categories this agent may report: slug -> description.
+    categories: ClassVar[dict[str, str]] = {}
+    #: Tools this agent may call (names from tools.TOOLS).
+    tools: ClassVar[list[str]] = ["read_file", "grep", "git_blame"]
+    #: File kinds (see ChangedFile.kind) this agent is shown.
+    kinds: ClassVar[tuple[str, ...]] = ("code",)
 
     def __init__(self, llm: LLMClient, config: ScrutaiConfig) -> None:
         self.llm = llm
         self.config = config
 
-    @abstractmethod
-    def gather_context(self, diff: DiffContext) -> str:
-        """ReAct 'act' step: use tools to pull the evidence this agent needs."""
+    # ---- context -----------------------------------------------------------
 
-    def system_prompt(self) -> str:
+    def files(self, diff: DiffContext) -> list[ChangedFile]:
+        return [f for f in diff.files if f.kind in self.kinds and f.added]
+
+    def seed(self, diff: DiffContext, toolbox: Toolbox) -> list[str]:
+        """Observations gathered deterministically before the loop (e.g. SAST)."""
+        return []
+
+    def context(self, diff: DiffContext) -> str:
+        parts = [f"ROLE: {self.name}", "TASK: review the lines this diff adds."]
+        for f in self.files(diff):
+            lang = f.language or "text"
+            parts.append(f"=== FILE {f.path} [{lang}, {f.kind}, {f.status}]")
+            parts.append(f.numbered_patch)
+        return "\n".join(parts)
+
+    def system_prompt(self, toolbox: Toolbox) -> str:
+        cats = "\n".join(f"- {slug}: {desc}" for slug, desc in self.categories.items())
         return (
-            f"You are the {self.name} specialist in a code review panel. {self.role} "
-            'Return ONLY JSON: {"findings": [{title, body, severity, confidence, '
-            "evidence[]}]}. severity in [info,low,medium,high,critical]; confidence in [0,1]."
+            f"You are the {self.name} specialist in a code review panel. {self.role}\n"
+            "You work in a ReAct loop. Reply with exactly ONE JSON object per turn: either\n"
+            '  {"thought": str, "action": {"tool": str, "args": {...}}}  to gather evidence, or\n'
+            '  {"thought": str, "findings": [{"title": str, "body": str, "file": str, '
+            '"line": int, "category": str, "severity": str, "confidence": float, '
+            '"evidence": [str]}]}  when done.\n'
+            f"Tools:\n{toolbox.describe()}\n"
+            f"Categories (use these exact slugs):\n{cats}\n"
+            "Rules: only report problems on lines the diff adds, citing their L<n> number. "
+            "Evidence must quote the code or a tool observation. Prefer silence to "
+            'speculation: return {"findings": []} when nothing is wrong. '
+            "severity in [info, low, medium, high, critical]; confidence in [0, 1]."
         )
+
+    # ---- the ReAct loop ----------------------------------------------------
 
     def review(self, diff: DiffContext) -> list[Finding]:
-        context = self.gather_context(diff)
-        raw = self.llm.complete(
-            model=self.config.models.specialist,
-            system=self.system_prompt(),
-            prompt=context,
-        )
-        return self._parse(raw, diff)
-
-    def _parse(self, raw: str, diff: DiffContext) -> list[Finding]:
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
+        if not self.files(diff):
             return []
+        toolbox = Toolbox(diff.repo_root, self.tools)
+        system = self.system_prompt(toolbox)
+        transcript = [self.context(diff)]
+        for obs in self.seed(diff, toolbox):
+            transcript.append(f"SEED OBSERVATION:\n{obs}")
+
+        steps = max(self.config.max_agent_steps, 1)
+        for step in range(1, steps + 1):
+            if step == steps:
+                transcript.append("--- FINAL: tool budget spent; reply with findings now.")
+            payload = self._ask(system, "\n".join(transcript))
+            if payload is None:
+                return []
+            if "findings" in payload:
+                return self._parse(payload, diff, toolbox.calls)
+            action = payload.get("action")
+            if not isinstance(action, dict) or step == steps:
+                return []
+            tool, args = str(action.get("tool", "")), action.get("args") or {}
+            obs = toolbox.run(tool, args if isinstance(args, dict) else {})
+            transcript.append(
+                f"--- STEP {step}\nACTION: {tool} {json.dumps(args)}\nOBSERVATION:\n{obs}"
+            )
+        return []
+
+    def _ask(self, system: str, prompt: str) -> dict[str, Any] | None:
+        try:
+            raw = self.llm.complete(
+                model=self.config.models.specialist, system=system, prompt=prompt
+            )
+            return extract_json(raw)
+        except (LLMError, json.JSONDecodeError):
+            return None
+
+    def _parse(self, payload: dict[str, Any], diff: DiffContext, trace: list[str]) -> list[Finding]:
+        items = payload.get("findings")
+        if not isinstance(items, list):
+            return []
+        known = set(diff.paths)
+        default_file = self.files(diff)[0].path
         findings: list[Finding] = []
-        default_file = diff.paths[0] if diff.paths else "unknown"
-        for item in payload.get("findings", []):
+        for item in items:
+            if not isinstance(item, dict) or not item.get("title"):
+                continue
             try:
+                line = item.get("line")
+                path = item.get("file")
                 findings.append(
                     Finding(
                         agent=self.name,
-                        title=item["title"],
-                        body=item.get("body", ""),
-                        file=item.get("file", default_file),
-                        line=item.get("line"),
-                        severity=Severity(item.get("severity", "medium")),
-                        confidence=float(item.get("confidence", 0.5)),
-                        evidence=item.get("evidence", []),
+                        title=str(item["title"]),
+                        body=str(item.get("body", "")),
+                        file=path if path in known else default_file,
+                        line=int(line) if line is not None else None,
+                        category=str(item.get("category") or "general").strip().lower(),
+                        severity=Severity(str(item.get("severity", "medium")).lower()),
+                        confidence=min(max(float(item.get("confidence", 0.5)), 0.0), 1.0),
+                        evidence=[str(e) for e in item.get("evidence", []) if e] + trace,
                     )
                 )
-            except (KeyError, ValueError):
+            except (TypeError, ValueError):
                 continue
         return findings

@@ -138,6 +138,9 @@ class Finding(BaseModel):
     body: str
     file: str
     line: int | None = None
+    # Machine-readable issue type (e.g. "injection", "broad_except"). Drives
+    # dedup across agents and scoring in the eval harness.
+    category: str = "general"
     severity: Severity = Severity.MEDIUM
     # 0.0-1.0 confidence. Specialists propose an initial value; the critic
     # overwrites it after cross-examination.
@@ -148,9 +151,14 @@ class Finding(BaseModel):
     critic_note: str | None = None
     alive: bool = True
 
-    def key(self) -> tuple[str, str, int | None]:
-        """Identity used for deduplication across agents."""
-        return (self.file, self.title.strip().lower(), self.line)
+    def key(self) -> tuple[str, int | None, str]:
+        """Identity used for deduplication across agents.
+
+        Two agents flagging the same category on the same line are one issue;
+        uncategorised findings fall back to their title.
+        """
+        what = self.category if self.category != "general" else self.title.strip().lower()
+        return (self.file, self.line, what)
 
 
 class ReviewResult(BaseModel):

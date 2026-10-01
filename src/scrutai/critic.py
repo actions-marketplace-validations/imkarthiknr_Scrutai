@@ -51,7 +51,7 @@ def critique(llm: LLMClient, config: ScrutaiConfig, findings: list[Finding]) -> 
 
 def dedupe(findings: list[Finding]) -> list[Finding]:
     """Collapse the same issue raised by multiple agents, keeping the strongest."""
-    best: dict[tuple[str, str, int | None], Finding] = {}
+    best: dict[tuple[str, int | None, str], Finding] = {}
     for f in findings:
         cur = best.get(f.key())
         if cur is None or f.confidence > cur.confidence:

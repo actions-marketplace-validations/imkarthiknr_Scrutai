@@ -1,16 +1,21 @@
 from __future__ import annotations
 
-from ..models import DiffContext
-from ..tools import grep
+from typing import ClassVar
+
 from .base import Specialist
 
 
 class TestCoverageAgent(Specialist):
+    __test__ = False  # not a pytest test class, despite the name
     name = "tests"
-    role = "You check whether new/changed code paths are covered by tests."
-
-    def gather_context(self, diff: DiffContext) -> str:
-        existing_tests = grep("def test_", diff.repo_root)[:5]
-        patches = "\n".join(f.patch for f in diff.files)
-        tests = "\n".join(existing_tests) or "no existing tests found"
-        return f"[role: tests]\nDIFF:\n{patches}\n\nEXISTING TESTS:\n{tests}"
+    role = (
+        "You check whether new public functions are exercised by tests. grep the repo for "
+        "each new function name before claiming it is untested; tests added in this same "
+        "diff count."
+    )
+    categories: ClassVar[dict[str, str]] = {
+        "missing_tests": "a new public function with no test referencing it",
+    }
+    # Sees test files too, so tests added in the same diff count as coverage.
+    kinds = ("code", "test")
+    tools: ClassVar[list[str]] = ["grep", "read_file"]
