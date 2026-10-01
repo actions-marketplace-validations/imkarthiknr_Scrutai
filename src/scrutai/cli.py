@@ -20,6 +20,7 @@ from .diff import DiffError, apply_filters, diff_from_file, diff_from_git
 from .llm import make_client
 from .models import ChangedFile, DiffContext, ReviewResult
 from .orchestrator import review_diff
+from .tools.semgrep import available as semgrep_available
 
 app = typer.Typer(add_completion=False, help="Multi-agent code review with an adversarial critic.")
 console = Console()
@@ -75,6 +76,9 @@ def review(
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
     config = ScrutaiConfig.load(config_path)
+    if config.semgrep == "required" and not semgrep_available():
+        console.print("[red]semgrep: required by config but not installed[/red]")
+        raise typer.Exit(code=2)
     llm = make_client(config.llm_mode)
     try:
         if demo:

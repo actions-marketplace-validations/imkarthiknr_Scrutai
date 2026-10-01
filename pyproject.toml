@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+semgrep = ["semgrep>=1.70"]
 dev = [
     "pytest>=8.2",
     "ruff>=0.5",

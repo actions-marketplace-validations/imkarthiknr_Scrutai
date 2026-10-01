@@ -1,3 +1,4 @@
+from . import semgrep
 from .repo import changed_files, git_blame, grep, read_file
 from .toolbox import TOOLS, Tool, Toolbox, register
 
@@ -10,4 +11,5 @@ __all__ = [
     "grep",
     "read_file",
     "register",
+    "semgrep",
 ]

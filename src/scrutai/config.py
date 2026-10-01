@@ -45,6 +45,10 @@ class ScrutaiConfig(BaseModel):
     # "heuristic" (free, deterministic) or "llm" (the router model may narrow
     # the heuristic selection further; it can never add agents).
     routing: str = "heuristic"
+    # Semgrep: "auto" runs it when installed, "off" never, "required" errors if
+    # missing. semgrep_config is "bundled" (offline ruleset) or any --config value.
+    semgrep: str = "auto"
+    semgrep_config: str = "bundled"
 
     @field_validator("enabled_agents")
     @classmethod
@@ -61,6 +65,13 @@ class ScrutaiConfig(BaseModel):
     def _known_mode(cls, mode: str) -> str:
         if mode not in ("mock", "live"):
             raise ValueError("llm_mode must be 'mock' or 'live'")
+        return mode
+
+    @field_validator("semgrep")
+    @classmethod
+    def _known_semgrep(cls, mode: str) -> str:
+        if mode not in ("auto", "off", "required"):
+            raise ValueError("semgrep must be 'auto', 'off' or 'required'")
         return mode
 
     @field_validator("routing")

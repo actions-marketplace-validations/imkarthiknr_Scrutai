@@ -1,0 +1,69 @@
+# Scrutai's bundled offline Semgrep ruleset. Rule ids embed the Scrutai category
+# (`scrutai.<category>.<name>`) so hits map straight onto finding categories.
+# Point `semgrep_config` at a registry pack (e.g. p/default) for broader coverage.
+rules:
+  - id: scrutai.injection.os-system
+    languages: [python]
+    severity: ERROR
+    message: os.system/os.popen with a non-literal command
+    patterns:
+      - pattern-either:
+          - pattern: os.system($X)
+          - pattern: os.popen($X, ...)
+      - pattern-not: os.system("...")
+      - pattern-not: os.popen("...", ...)
+  - id: scrutai.injection.subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: subprocess call with shell=True and a non-literal command
+    patterns:
+      - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+      - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+  - id: scrutai.injection.eval
+    languages: [python]
+    severity: ERROR
+    message: eval/exec on a non-literal value
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: exec($X)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+  - id: scrutai.sql_injection.formatted-execute
+    languages: [python]
+    severity: ERROR
+    message: SQL assembled with string formatting passed to execute()
+    pattern-either:
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.execute("..." % $X, ...)
+      - pattern: $C.execute("..." + $X, ...)
+      - pattern: $C.execute("...".format(...), ...)
+  - id: scrutai.unsafe_deserialization.pickle
+    languages: [python]
+    severity: ERROR
+    message: pickle deserialization of possibly untrusted data
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+  - id: scrutai.unsafe_deserialization.yaml-load
+    languages: [python]
+    severity: ERROR
+    message: yaml.load without a safe loader
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+      - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader, ...)
+  - id: scrutai.weak_crypto.md5-sha1
+    languages: [python]
+    severity: WARNING
+    message: MD5/SHA1 used (weak for security purposes)
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.sha1(...)
+      - pattern-not: hashlib.$H(..., usedforsecurity=False, ...)
+  - id: scrutai.tls_verify_disabled.requests
+    languages: [python]
+    severity: WARNING
+    message: TLS certificate verification disabled
+    pattern: requests.$M(..., verify=False, ...)

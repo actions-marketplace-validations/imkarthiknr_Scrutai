@@ -77,7 +77,7 @@ class Specialist:
     def review(self, diff: DiffContext) -> list[Finding]:
         if not self.files(diff):
             return []
-        toolbox = Toolbox(diff.repo_root, self.tools)
+        toolbox = Toolbox(diff.repo_root, self.tools, self.config.semgrep_config)
         system = self.system_prompt(toolbox)
         transcript = [self.context(diff)]
         for obs in self.seed(diff, toolbox):
@@ -146,7 +146,7 @@ class Specialist:
     def defend(self, finding: Finding, diff: DiffContext) -> Finding:
         """Answer the critic's challenge: gather evidence and defend, or withdraw."""
         f = finding.model_copy(deep=True)
-        toolbox = Toolbox(diff.repo_root, self.tools)
+        toolbox = Toolbox(diff.repo_root, self.tools, self.config.semgrep_config)
         system = (
             f"You are the {self.name} specialist defending a finding the critic challenged. "
             "Use tools to confirm or refute it, then reply with ONE JSON object: "

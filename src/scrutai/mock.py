@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .tools.semgrep import category_for
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -339,22 +341,53 @@ class MockLLMClient:
             n = sum(1 for ln in observations[-1].splitlines() if ":" in ln and ln[:1] != "(")
             extra.append(f"grep: {n} call site(s) of this sink in the repo")
         findings = [
-            _finding(
-                rule,
-                src,
-                [
-                    *extra,
-                    *(
-                        [f"inside loop at L{lp.line}: {lp.text.strip()}"]
-                        if (lp := loops.get(i))
-                        else []
-                    ),
-                ],
-                0.7,
-            )
-            for i, (rule, src) in enumerate(hits)
+            *self._sast(prompt, lines, {(src.file, src.line, rule.category) for rule, src in hits}),
+            *[
+                _finding(
+                    rule,
+                    src,
+                    [
+                        *extra,
+                        *(
+                            [f"inside loop at L{lp.line}: {lp.text.strip()}"]
+                            if (lp := loops.get(i))
+                            else []
+                        ),
+                    ],
+                    0.7,
+                )
+                for i, (rule, src) in enumerate(hits)
+            ],
         ]
+        for hit in _SEMGREP_HIT.finditer(_block(prompt, "SEMGREP:")):
+            for f in findings:
+                if (f["file"], f["line"]) == (hit.group(1), int(hit.group(2))):
+                    f["evidence"].append(hit.group(0).strip())
         return {"thought": f"{len(findings)} issue(s) on added lines.", "findings": findings}
+
+    def _sast(
+        self, prompt: str, lines: list[SrcLine], seen: set[tuple[str, int, str]]
+    ) -> list[dict[str, Any]]:
+        """Findings for Semgrep hits the regex rules did not already cover."""
+        out: list[dict[str, Any]] = []
+        for path, line, rule_id, message in _SEMGREP_HIT.findall(_block(prompt, "SEMGREP:")):
+            category = category_for(rule_id)
+            if (path, int(line), category) in seen:
+                continue
+            src = next((s for s in lines if s.file == path and s.line == int(line)), None)
+            out.append(
+                {
+                    "title": f"Semgrep: {message}",
+                    "body": f"Rule {rule_id} fired on this line.",
+                    "file": path,
+                    "line": int(line),
+                    "category": category,
+                    "severity": "high",
+                    "confidence": 0.8,
+                    "evidence": [f"L{line}: {src.text.strip() if src else ''}".rstrip()],
+                }
+            )
+        return out
 
     def _tests(self, prompt: str) -> dict[str, Any]:
         lines = parse_files(prompt)
@@ -446,6 +479,10 @@ class MockLLMClient:
         if evidence.strip() in ("", "none"):
             return kill(0.2, "No concrete line or tool result cited.")
 
+        line_ref = f"{fields.get('FILE', '').split(' (kind')[0]}:{fields.get('LINE')}: ["
+        if line_ref in evidence:
+            return {"decision": "uphold", "confidence": 0.9, "note": "A Semgrep rule fired here."}
+
         rule = RULES_BY_CATEGORY.get(category)
         if rule is not None:
             # Secrets and SQL live *in* strings; everything else must survive
@@ -512,6 +549,7 @@ _CONSTANT_SINK = re.compile(
 )
 # A loop header inside a numbered listing ("+L3:     for x in y:") or evidence.
 _LOOP_IN_LISTING = re.compile(r"L\d+:\s+(?:async\s+)?(for|while)\b")
+_SEMGREP_HIT = re.compile(r"^(\S+?):(\d+): \[([^\]]+)\] \(\w+\) (.*)$", re.M)
 _SCRIPT_PATH = re.compile(r"(^|/)(cli|__main__|manage)\.py\b|(^|/)(scripts?|bin)/")
 _TICKET = re.compile(r"#\d+|\b[A-Z][A-Z0-9]+-\d+\b|https?://")
 _PLACEHOLDER = re.compile(

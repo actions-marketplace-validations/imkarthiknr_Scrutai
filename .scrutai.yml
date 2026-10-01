@@ -6,6 +6,10 @@ max_critic_rounds: 2
 token_budget: 200000
 fail_on: high
 llm_mode: mock        # switch to "live" and export a provider key to run for real
+routing: heuristic    # or "llm": the router model may narrow the selection further
+max_agent_steps: 4    # ReAct budget per specialist (tool calls + final answer)
+semgrep: auto         # auto | off | required
+semgrep_config: bundled   # or any semgrep --config value, e.g. p/default
 include: ["**/*"]
 exclude: ["**/vendor/**", "**/*.lock", "**/dist/**"]
 models:
