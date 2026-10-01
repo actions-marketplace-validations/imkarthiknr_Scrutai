@@ -342,7 +342,10 @@ class MockLLMClient:
             if not rule.pattern.search(code):
                 return kill(0.15, "Pattern only appears in a comment or string literal.")
         if category == "hardcoded_secret":
-            m = re.search(r"[:=]\s*([\"'])(.*?)\1", cited)
+            # Judge the value the secret rule matched, not the first string on
+            # the line (`connect(host="db", password="...")`).
+            hit = RULES_BY_CATEGORY["hardcoded_secret"].pattern.search(cited)
+            m = re.search(r"[:=]\s*([\"'])(.*?)\1\s*$", hit.group(0)) if hit else None
             value = m.group(2) if m else ""
             if in_test_file or _placeholder(value):
                 return kill(0.2, "Placeholder or test-fixture value, not a real credential.")

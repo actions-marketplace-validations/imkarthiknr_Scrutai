@@ -185,3 +185,9 @@ def test_strip_code() -> None:
     assert strip_code('x = "a # b"', keep_strings=True) == 'x = "a # b"'
     assert strip_code("call(x) // js comment") == "call(x) "
     assert strip_code(r'"esc\"aped" + y') == '"" + y'
+
+
+def test_secret_value_is_the_matched_one_not_the_first_string() -> None:
+    patch = '+conn = connect(host="db", password="Pr0d-Db!2024")\n'
+    result = review_diff(_diff(patch), ScrutaiConfig(enabled_agents=["security"]), MockLLMClient())
+    assert [f.category for f in result.findings] == ["hardcoded_secret"]

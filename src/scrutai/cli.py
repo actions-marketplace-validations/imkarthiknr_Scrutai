@@ -12,6 +12,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from .config import ScrutaiConfig
@@ -99,16 +100,42 @@ def review(
 
 @app.command("eval")
 def eval_cmd(
-    benchmark: str = typer.Option("benchmark/cases.jsonl", help="Labeled cases."),
+    benchmark: str = typer.Option("benchmark/cases.jsonl", help="Labeled cases (JSONL)."),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
+    min_precision: float = typer.Option(0.0, help="Exit 1 if precision falls below this."),
+    min_recall: float = typer.Option(0.0, help="Exit 1 if recall falls below this."),
+    report: str | None = typer.Option(None, help="Also write a markdown report here."),
+    output_json: bool = typer.Option(False, "--json", help="Emit metrics as JSON."),
 ) -> None:
-    from .eval.harness import run_benchmark
+    """Run the labeled benchmark and report precision / recall / critic lift."""
+    from .eval.harness import CaseResult, markdown_report, run_benchmark
 
     if not Path(benchmark).exists():
         console.print(f"[red]No benchmark at {benchmark}[/red]")
+        raise typer.Exit(code=2)
+    details: list[CaseResult] = []
+    try:
+        metrics = run_benchmark(benchmark, ScrutaiConfig.load(config_path), details)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    md = markdown_report(metrics, details)
+    if report:
+        Path(report).write_text(md)
+    if output_json:
+        typer.echo(json.dumps(metrics, indent=2))
+    else:
+        console.print(Markdown(md))
+
+    failed = []
+    if metrics["precision"] < min_precision:
+        failed.append(f"precision {metrics['precision']} < {min_precision}")
+    if metrics["recall"] < min_recall:
+        failed.append(f"recall {metrics['recall']} < {min_recall}")
+    if failed:
+        console.print(f"[red]Benchmark gate failed:[/red] {'; '.join(failed)}")
         raise typer.Exit(code=1)
-    metrics = run_benchmark(benchmark, ScrutaiConfig.load(config_path))
-    console.print_json(json.dumps(metrics))
 
 
 if __name__ == "__main__":

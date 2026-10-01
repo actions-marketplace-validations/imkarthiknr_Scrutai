@@ -25,3 +25,8 @@ jobs:
         run: uv run --no-sync mypy src
       - name: Test
         run: uv run --no-sync pytest -q
+      - name: Benchmark gate (mock pipeline)
+        run: uv run --no-sync scrutai eval --min-precision 0.95 --min-recall 0.8 --report eval-report.md
+      - name: Publish benchmark report
+        if: always()
+        run: test -f eval-report.md && cat eval-report.md >> "$GITHUB_STEP_SUMMARY" || true
