@@ -1,0 +1,94 @@
+name: Scrutai review
+description: >-
+  Multi-agent code review with an adversarial critic. Posts a summary comment and
+  inline findings on the pull request; optionally emits SARIF for code scanning.
+author: Karthik N R
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  config:
+    description: Path to .scrutai.yml in the repository.
+    default: .scrutai.yml
+  llm-mode:
+    description: "'mock' (offline, no key) or 'live' (needs a provider key in env). Empty = use config."
+    default: ""
+  post-comments:
+    description: Post the summary and inline comments on the PR.
+    default: "true"
+  sarif-file:
+    description: If set, also write SARIF here (upload it with github/codeql-action/upload-sarif).
+    default: ""
+  install-semgrep:
+    description: Install Semgrep so the security agent gets SAST evidence.
+    default: "false"
+  fail-on-findings:
+    description: Fail the job when a finding reaches the config's fail_on severity.
+    default: "true"
+  python-version:
+    description: Python used to run Scrutai.
+    default: "3.12"
+
+outputs:
+  verdict:
+    description: approve | comment | request_changes
+    value: ${{ steps.review.outputs.verdict }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install Scrutai
+      shell: bash
+      run: |
+        extra=""
+        if [ "${{ inputs.install-semgrep }}" = "true" ]; then extra="[semgrep]"; fi
+        python -m pip install --quiet "${{ github.action_path }}${extra}"
+    - name: Review pull request
+      id: review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        CONFIG: ${{ inputs.config }}
+        LLM_MODE: ${{ inputs.llm-mode }}
+        POST: ${{ inputs.post-comments }}
+        SARIF: ${{ inputs.sarif-file }}
+        FAIL: ${{ inputs.fail-on-findings }}
+      run: |
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::error::Scrutai runs on pull_request events (no PR number found)"; exit 2
+        fi
+        cfg="$CONFIG"
+        if [ -n "$LLM_MODE" ]; then
+          cfg="$RUNNER_TEMP/scrutai.yml"
+          { [ -f "$CONFIG" ] && grep -v '^llm_mode:' "$CONFIG"; echo "llm_mode: $LLM_MODE"; } > "$cfg"
+        fi
+        args=(review --pr "$PR_NUMBER" --config "$cfg" --format json --output "$RUNNER_TEMP/scrutai.json")
+        [ "$POST" = "true" ] && args+=(--post)
+        set +e
+        scrutai "${args[@]}"
+        code=$?
+        set -e
+        if [ -n "$SARIF" ]; then
+          python - "$RUNNER_TEMP/scrutai.json" "$SARIF" <<'PY'
+        import json, sys
+        from scrutai.models import ReviewResult
+        from scrutai.report import to_sarif_json
+        result = ReviewResult.model_validate_json(open(sys.argv[1]).read())
+        open(sys.argv[2], "w").write(to_sarif_json(result))
+        PY
+        fi
+        verdict=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['verdict'])" "$RUNNER_TEMP/scrutai.json" 2>/dev/null || echo error)
+        echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+        python - "$RUNNER_TEMP/scrutai.json" >> "$GITHUB_STEP_SUMMARY" <<'PY' || true
+        import sys
+        from scrutai.models import ReviewResult
+        from scrutai.report import to_markdown
+        print(to_markdown(ReviewResult.model_validate_json(open(sys.argv[1]).read()), show_dropped=True))
+        PY
+        if [ "$code" = "1" ] && [ "$FAIL" != "true" ]; then code=0; fi
+        exit $code

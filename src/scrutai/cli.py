@@ -9,6 +9,7 @@ scrutai eval --min-precision 0.9          # run the benchmark as a CI gate
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from enum import StrEnum
 from pathlib import Path
@@ -19,7 +20,8 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from .config import ScrutaiConfig
-from .diff import DiffError, apply_filters, diff_from_file, diff_from_git
+from .diff import DiffError, apply_filters, diff_from_file, diff_from_git, parse_diff
+from .github import GitHubClient, GitHubError, PullRequest, detect_repo, publish
 from .llm import make_client
 from .models import ChangedFile, DiffContext, ReviewResult
 from .orchestrator import review_diff
@@ -124,29 +126,56 @@ def review(
     output_json: bool = typer.Option(False, "--json", help="Shorthand for --format json."),
     output: str | None = typer.Option(None, "--output", "-o", help="Write the report to a file."),
     show_dropped: bool = typer.Option(False, help="Also list findings the critic killed."),
+    pr: int | None = typer.Option(None, "--pr", help="Review a GitHub pull request by number."),
+    post: bool = typer.Option(False, help="With --pr: post the summary and inline comments."),
+    github_repo: str | None = typer.Option(
+        None, help="owner/name for --pr (default: GITHUB_REPOSITORY or the origin remote)."
+    ),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
-    """Review a git range, a patch file, or the bundled demo.
+    """Review a git range, a patch file, a GitHub PR, or the bundled demo.
 
-    Exit codes: 0 ok, 1 a finding at or above fail_on, 2 usage/diff error.
+    Exit codes: 0 ok, 1 a finding at or above fail_on, 2 usage/diff/API error.
     """
     config = _load_config(config_path)
     if output_json:
         fmt = Format.json
+    if post and pr is None:
+        console.print("[red]--post needs --pr[/red]")
+        raise typer.Exit(code=2)
+    gh: tuple[GitHubClient, PullRequest] | None = None
     if demo:
         result = _review_demo(config)
     else:
         try:
-            diff = (
-                diff_from_file(diff_file, repo_root=repo)
-                if diff_file
-                else diff_from_git(base, head, repo)
-            )
-        except DiffError as exc:
+            if pr is not None:
+                client = GitHubClient(
+                    os.environ.get("GITHUB_TOKEN", ""),
+                    github_repo or detect_repo(repo),
+                    os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+                )
+                pull = client.pull_request(pr)
+                diff = parse_diff(client.pull_request_diff(pr), repo_root=repo, head=pull.head_sha)
+                gh = (client, pull)
+            elif diff_file:
+                diff = diff_from_file(diff_file, repo_root=repo)
+            else:
+                diff = diff_from_git(base, head, repo)
+        except (DiffError, GitHubError) as exc:
             console.print(f"[red]Could not build diff:[/red] {exc}")
             raise typer.Exit(code=2) from exc
         diff = apply_filters(diff, config.include, config.exclude)
         result = review_diff(diff, config, make_client(config.llm_mode))
+        if gh is not None and post:
+            try:
+                rep = publish(gh[0], gh[1], result, diff)
+            except GitHubError as exc:
+                console.print(f"[red]Could not post review:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
+            console.print(
+                f"[dim]PR #{pr}: summary {rep.summary}, {rep.posted} new inline comment(s), "
+                f"{rep.skipped_duplicates} already posted, {rep.skipped_off_diff} off-diff.[/dim]"
+            )
 
     _emit(result, fmt, output, show_dropped)
     if any(f.severity.rank >= config.fail_on.rank for f in result.findings):
