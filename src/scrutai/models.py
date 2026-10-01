@@ -150,6 +150,12 @@ class Finding(BaseModel):
     # Populated by the critic: why it was kept, downgraded, or killed.
     critic_note: str | None = None
     alive: bool = True
+    # Debate state: the critic's open question, the specialist's answer, and a
+    # per-round log of the critic's decisions.
+    contested: bool = False
+    challenge: str | None = None
+    defense: str | None = None
+    history: list[str] = Field(default_factory=list)
 
     def key(self) -> tuple[str, int | None, str]:
         """Identity used for deduplication across agents.
@@ -171,6 +177,9 @@ class ReviewResult(BaseModel):
     rounds: int = 0
     # Which specialists the router woke for this diff.
     agents: list[str] = Field(default_factory=list)
+    # Findings the critic killed (or specialists withdrew), kept for audit
+    # and for measuring how much noise the critic removes.
+    dropped: list[Finding] = Field(default_factory=list)
 
     def by_severity(self) -> dict[str, int]:
         counts: dict[str, int] = {}

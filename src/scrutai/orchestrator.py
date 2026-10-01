@@ -1,13 +1,17 @@
 """The orchestrator graph — hierarchical delegation, built on LangGraph.
 
-    START -> route -> specialists -> critic --(unstable & rounds left)--> critic
+    START -> route -> specialists -> critic --(challenged & rounds left)--> defend
+                                       ^                                   |
+                                       +-----------------------------------+
                                        |
-                                       +--(stable)--> verdict -> END
+                                       +--(settled or out of rounds)--> verdict -> END
 
 `route` inspects the diff and selects only relevant specialists (see router.py;
 a docs-only change wakes nobody). `specialists` fans the diff out to the
-selected ReAct agents. `critic` cross-examines their findings and can loop.
-`verdict` assembles the typed ReviewResult.
+selected ReAct agents. `critic` cross-examines every finding; any it
+*challenges* go back to their specialist in `defend`, which gathers evidence and
+defends or withdraws, and the critic re-judges. `verdict` assembles the typed
+ReviewResult.
 """
 
 from __future__ import annotations
@@ -46,22 +50,30 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         return {"findings": dedupe(found)}
 
     def critic_node(state: ReviewState) -> ReviewState:
-        judged = critique(llm, config, state["findings"])
-        return {"findings": judged, "round": state.get("round", 0) + 1}
+        round_no = state.get("round", 0) + 1
+        judged = critique(llm, config, state["findings"], state["diff"], round_no)
+        return {"findings": judged, "round": round_no}
 
-    def _needs_another_round(state: ReviewState) -> str:
-        # Hook for real multi-round debate; converges immediately in v0.1.
-        if state["round"] < config.max_critic_rounds and _unstable(state["findings"]):
-            return "critic"
+    def defend_node(state: ReviewState) -> ReviewState:
+        defended: list[Finding] = []
+        for f in state["findings"]:
+            if f.contested and f.agent in REGISTRY:
+                f = REGISTRY[f.agent](llm, config).defend(f, state["diff"])
+            defended.append(f)
+        return {"findings": defended}
+
+    def _next(state: ReviewState) -> str:
+        if state["round"] < config.max_critic_rounds and _unsettled(state["findings"]):
+            return "defend"
         return "verdict"
 
     def verdict_node(state: ReviewState) -> ReviewState:
-        survivors = [
-            f for f in state["findings"] if f.alive and f.severity.rank >= config.min_severity.rank
-        ]
+        findings = sorted(state["findings"], key=_rank)
+        survivors = [f for f in findings if f.alive and f.severity.rank >= config.min_severity.rank]
         result = ReviewResult(
             verdict=_decide(survivors, config),
-            findings=sorted(survivors, key=lambda f: -f.severity.rank),
+            findings=survivors,
+            dropped=[f for f in findings if not f.alive],
             summary=_summarize(survivors, state.get("selected", [])),
             tokens_used=llm.tokens_used,
             rounds=state.get("round", 0),
@@ -73,20 +85,24 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
     g.add_node("route", route_node)
     g.add_node("specialists", specialists_node)
     g.add_node("critic", critic_node)
+    g.add_node("defend", defend_node)
     g.add_node("verdict", verdict_node)
     g.add_edge(START, "route")
     g.add_edge("route", "specialists")
     g.add_edge("specialists", "critic")
-    g.add_conditional_edges(
-        "critic", _needs_another_round, {"critic": "critic", "verdict": "verdict"}
-    )
+    g.add_conditional_edges("critic", _next, {"defend": "defend", "verdict": "verdict"})
+    g.add_edge("defend", "critic")
     g.add_edge("verdict", END)
     return g.compile()
 
 
-def _unstable(findings: list[Finding]) -> bool:
-    # Placeholder for a real convergence check (e.g. a finding flipped state).
-    return False
+def _unsettled(findings: list[Finding]) -> bool:
+    """The debate continues while the critic has an open challenge."""
+    return any(f.contested for f in findings)
+
+
+def _rank(f: Finding) -> tuple[int, float, str, int]:
+    return (-f.severity.rank, -f.confidence, f.file, f.line or 0)
 
 
 def _decide(findings: list[Finding], config: ScrutaiConfig) -> Verdict:

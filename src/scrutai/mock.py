@@ -207,6 +207,8 @@ class MockLLMClient:
             return json.dumps({"agents": m.group(1).split(", ") if m else []})
         if role == "critic" or "you are the critic" in system.lower():
             return json.dumps(self._critic(prompt))
+        if "\nMODE: defend" in prompt:
+            return json.dumps(self._defend(prompt))
         if role == "tests":
             return json.dumps(self._tests(prompt))
         if role in {r.agent for r in RULES}:
@@ -287,15 +289,158 @@ class MockLLMClient:
             )
         return {"findings": findings}
 
+    # ---- debate: specialist defends a challenged finding -----------------------
+
+    def _defend(self, prompt: str) -> dict[str, Any]:
+        fields = _fields(prompt)
+        path, category = fields.get("FILE", ""), fields.get("CATEGORY", "")
+        try:
+            line = int(fields.get("LINE", ""))
+        except ValueError:
+            return {"withdraw": True, "reason": "no line to defend"}
+        if not _observations(prompt):
+            return {
+                "thought": "Re-read the cited code before answering the critic.",
+                "action": {
+                    "tool": "read_file",
+                    "args": {"path": path, "start": max(line - 2, 1), "end": line + 2},
+                },
+            }
+        src = next((s for s in parse_files(prompt) if s.file == path and s.line == line), None)
+        rule = RULES_BY_CATEGORY.get(category)
+        if src is None or (rule is not None and not rule.pattern.search(src.text)):
+            return {"withdraw": True, "reason": "could not re-confirm the cited line"}
+        return {
+            "defense": f"The diff adds L{line} `{src.text.strip()}`, which matches {category}.",
+            "evidence": [f"re-read L{line}: {src.text.strip()}"],
+        }
+
     # ---- critic ----------------------------------------------------------------
 
     def _critic(self, prompt: str) -> dict[str, Any]:
-        weak = "evidence: none" in prompt.lower()
+        fields = _fields(prompt)
+        category = fields.get("CATEGORY", "general")
+        cited = fields.get("CITED CODE", "")
+        evidence = _block(prompt, "EVIDENCE:")
+        round_no, max_rounds = _round(fields.get("ROUND", "1 of 1"))
+        in_test_file = "(kind: test)" in fields.get("FILE", "")
+
+        def kill(conf: float, note: str) -> dict[str, Any]:
+            return {"decision": "kill", "confidence": conf, "note": note}
+
+        if cited.startswith("("):
+            return kill(0.1, f"Out of scope: {cited.strip('()')}.")
+        if evidence.strip() in ("", "none"):
+            return kill(0.2, "No concrete line or tool result cited.")
+
+        rule = RULES_BY_CATEGORY.get(category)
+        if rule is not None:
+            # Secrets and SQL live *in* strings; everything else must survive
+            # with string contents blanked out.
+            keep_strings = category in ("hardcoded_secret", "sql_injection")
+            code = strip_code(cited, keep_strings=keep_strings)
+            if not rule.pattern.search(code):
+                return kill(0.15, "Pattern only appears in a comment or string literal.")
+        if category == "hardcoded_secret":
+            m = re.search(r"[:=]\s*([\"'])(.*?)\1", cited)
+            value = m.group(2) if m else ""
+            if in_test_file or _placeholder(value):
+                return kill(0.2, "Placeholder or test-fixture value, not a real credential.")
+        if category == "injection" and _CONSTANT_SINK.search(cited):
+            return kill(0.3, "The command is a constant literal; no untrusted input reaches it.")
+        if category == "weak_crypto" and "usedforsecurity=False" in cited:
+            return kill(0.2, "Explicitly marked usedforsecurity=False.")
+
+        grounded = "- tool:" in evidence
+        defended = "SPECIALIST DEFENSE:" in prompt
+        if not grounded and not defended:
+            return {
+                "decision": "challenge",
+                "confidence": 0.5,
+                "note": "Plausible, but no tool observation backs it.",
+                "question": f"Re-read line {fields.get('LINE')} with a tool: does it really "
+                f"exhibit {category}?",
+            }
+        if round_no > max_rounds:  # defensive; the graph never gets here
+            return kill(0.3, "Debate did not converge.")
+        if in_test_file and rule is not None and rule.severity in ("high", "critical"):
+            return {
+                "decision": "downgrade",
+                "confidence": 0.7,
+                "severity": "low",
+                "note": "Real pattern, but only in test code.",
+            }
+        conf = 0.8 if defended and not grounded else 0.85
         return {
-            "confidence": 0.2 if weak else 0.82,
-            "note": (
-                "No concrete line or tool result cited; downgraded."
-                if weak
-                else "Backed by a cited line and tool output; upheld."
-            ),
+            "decision": "uphold",
+            "confidence": conf,
+            "note": "Cited line and evidence hold up.",
         }
+
+
+_CONSTANT_SINK = re.compile(
+    r"\b(os\.system|os\.popen|eval|exec)\(\s*([\"'])[^\"']*\2\s*\)"
+    r"|subprocess\.\w+\(\s*([\"'])[^\"']*\3\s*,"
+)
+_PLACEHOLDER = re.compile(
+    r"^(x+|\*+|<.*>|\$\{.*\}|\{\{.*\}\}|your[-_ ].*|.*(example|dummy|placeholder|"
+    r"changeme|fake|sample|redacted).*|test.*)$",
+    re.I,
+)
+
+
+def _placeholder(value: str) -> bool:
+    return len(value) < 6 or bool(_PLACEHOLDER.match(value))
+
+
+def _fields(prompt: str) -> dict[str, str]:
+    """Single-line `KEY: value` fields from a prompt (first occurrence wins)."""
+    out: dict[str, str] = {}
+    for key, value in re.findall(r"^([A-Z][A-Z ]+): (.*)$", prompt, re.M):
+        out.setdefault(key, value)
+    return out
+
+
+def _block(prompt: str, header: str) -> str:
+    """The lines following `header` up to the next ALLCAPS header."""
+    if header not in prompt:
+        return ""
+    body = prompt.split(header, 1)[1]
+    m = re.search(r"^[A-Z][A-Z ]+:", body, re.M)
+    return body[: m.start()] if m else body
+
+
+def _round(text: str) -> tuple[int, int]:
+    m = re.match(r"(\d+) of (\d+)", text)
+    return (int(m.group(1)), int(m.group(2))) if m else (1, 1)
+
+
+def strip_code(line: str, keep_strings: bool = False) -> str:
+    """Drop comments (and, unless keep_strings, string contents) from one line."""
+    out: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\":
+                if keep_strings:
+                    out.append(line[i : i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+                out.append(ch)
+            elif keep_strings:
+                out.append(ch)
+            i += 1
+            continue
+        if ch in "\"'":
+            quote = ch
+            out.append(ch)
+        elif ch == "#" or line.startswith("//", i):
+            break
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)

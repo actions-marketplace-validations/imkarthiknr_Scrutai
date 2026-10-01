@@ -46,7 +46,10 @@ def _render(result: ReviewResult) -> None:
         f"[dim]agents={','.join(result.agents) or '-'} rounds={result.rounds} "
         f"tokens={result.tokens_used}[/dim]"
     )
-    console.print(f"[italic]{result.summary}[/italic]\n")
+    console.print(f"[italic]{result.summary}[/italic]")
+    if result.dropped:
+        console.print(f"[dim]The critic dropped {len(result.dropped)} finding(s).[/dim]")
+    console.print()
     if not result.findings:
         return
     table = Table(show_lines=False)

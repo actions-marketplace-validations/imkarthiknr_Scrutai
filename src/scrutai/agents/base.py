@@ -140,3 +140,52 @@ class Specialist:
             except (TypeError, ValueError):
                 continue
         return findings
+
+    # ---- the critic debate ---------------------------------------------------
+
+    def defend(self, finding: Finding, diff: DiffContext) -> Finding:
+        """Answer the critic's challenge: gather evidence and defend, or withdraw."""
+        f = finding.model_copy(deep=True)
+        toolbox = Toolbox(diff.repo_root, self.tools)
+        system = (
+            f"You are the {self.name} specialist defending a finding the critic challenged. "
+            "Use tools to confirm or refute it, then reply with ONE JSON object: "
+            '{"thought": str, "action": {"tool": str, "args": {...}}} to gather evidence, '
+            '{"defense": str, "evidence": [str]} if it holds up, or '
+            '{"withdraw": true, "reason": str} if it does not. Withdrawing a false '
+            f"positive is a success, not a failure.\nTools:\n{toolbox.describe()}"
+        )
+        prior = "\n".join(f"- {e}" for e in f.evidence) or "none"
+        transcript = [
+            self.context(diff),
+            "MODE: defend",
+            f"FINDING: {f.title}\nCATEGORY: {f.category}\nFILE: {f.file}\nLINE: {f.line}",
+            f"BODY: {f.body}\nEVIDENCE SO FAR:\n{prior}",
+            f"CHALLENGE: {f.challenge}",
+        ]
+        for step in range(1, max(self.config.max_agent_steps, 1) + 1):
+            payload = self._ask(system, "\n".join(transcript))
+            if payload is None:
+                break
+            if payload.get("withdraw"):
+                f.alive, f.contested = False, False
+                reason = str(payload.get("reason", "")).strip()
+                f.critic_note = f"withdrawn by {self.name}: {reason}".rstrip(": ")
+                f.history.append(f"defense: withdrawn {reason}".rstrip())
+                return f
+            if "defense" in payload:
+                f.defense = str(payload["defense"])
+                new = [str(e) for e in payload.get("evidence", []) if e]
+                f.evidence = [*f.evidence, *new, *toolbox.calls]
+                f.history.append("defense: submitted")
+                return f
+            action = payload.get("action")
+            if not isinstance(action, dict):
+                break
+            tool, args = str(action.get("tool", "")), action.get("args") or {}
+            obs = toolbox.run(tool, args if isinstance(args, dict) else {})
+            transcript.append(
+                f"--- STEP {step}\nACTION: {tool} {json.dumps(args)}\nOBSERVATION:\n{obs}"
+            )
+        f.history.append("defense: none offered")
+        return f

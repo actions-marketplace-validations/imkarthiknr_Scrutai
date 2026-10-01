@@ -46,17 +46,33 @@ def added_lines(patch: str) -> list[DiffLine]:
     return out
 
 
-def removed_lines(patch: str) -> list[str]:
-    out: list[str] = []
+def new_file_lines(patch: str) -> dict[int, tuple[str, bool]]:
+    """Every new-file line visible in the patch: line -> (text, is_added)."""
+    out: dict[int, tuple[str, bool]] = {}
+    lineno = 1
     in_header = False
     for raw in patch.splitlines():
+        m = _HUNK.match(raw)
+        if m:
+            lineno, in_header = int(m.group(1)), False
+            continue
         if raw.startswith("diff --git "):
             in_header = True
-        elif _HUNK.match(raw):
-            in_header = False
-        elif not in_header and raw.startswith("-"):
-            out.append(raw[1:])
+        if in_header or raw.startswith(("\\", "-")):
+            continue
+        out[lineno] = (raw[1:], raw.startswith("+"))
+        lineno += 1
     return out
+
+
+def window(patch: str, line: int, radius: int = 3) -> str:
+    """The patch's new-file lines around `line`, marked `+` when added."""
+    lines = new_file_lines(patch)
+    return "\n".join(
+        f"{'+' if added else ' '}L{n}: {text}"
+        for n, (text, added) in sorted(lines.items())
+        if abs(n - line) <= radius
+    )
 
 
 def numbered(patch: str) -> str:
