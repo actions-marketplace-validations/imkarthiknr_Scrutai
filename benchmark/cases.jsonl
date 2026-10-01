@@ -1,0 +1,4 @@
+{"id": "inj-01", "file": "runner.py", "patch": "+def run(cmd):\n+    import os\n+    return os.system(cmd)\n", "labels": ["injection"]}
+{"id": "exc-01", "file": "svc.py", "patch": "+def load(x):\n+    try:\n+        return parse(x)\n+    except Exception:\n+        return None\n", "labels": ["broad_except"]}
+{"id": "test-01", "file": "calc.py", "patch": "+def discount(price, pct):\n+    return price * (1 - pct)\n", "labels": ["missing_tests"]}
+{"id": "clean-01", "file": "readme.py", "patch": "+# Updated the module docstring for clarity.\n+\"\"\"Utility helpers.\"\"\"\n", "labels": []}

@@ -1,0 +1,14 @@
+# Scrutai configuration. All values shown are defaults — delete any you don't override.
+enabled_agents: [security, correctness, tests]
+min_severity: low
+min_confidence: 0.6
+max_critic_rounds: 2
+token_budget: 200000
+fail_on: high
+llm_mode: mock        # switch to "live" and export a provider key to run for real
+include: ["**/*"]
+exclude: ["**/vendor/**", "**/*.lock", "**/dist/**"]
+models:
+  router: gpt-4o-mini
+  specialist: gpt-4o-mini
+  critic: claude-3-5-sonnet-latest
