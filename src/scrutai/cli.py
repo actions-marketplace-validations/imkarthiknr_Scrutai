@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import ScrutaiConfig
-from .diff import diff_from_git
+from .diff import DiffError, apply_filters, diff_from_file, diff_from_git
 from .llm import make_client
 from .models import ChangedFile, DiffContext, ReviewResult
 from .orchestrator import review_diff
@@ -63,12 +63,25 @@ def review(
     head: str = typer.Option("HEAD", help="Head ref."),
     repo: str = typer.Option(".", help="Repo root."),
     demo: bool = typer.Option(False, help="Review a bundled sample diff instead of git."),
+    diff_file: str | None = typer.Option(
+        None, "--diff", help="Review a unified diff file instead of git ('-' reads stdin)."
+    ),
     output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
     config = ScrutaiConfig.load(config_path)
     llm = make_client(config.llm_mode)
-    diff = _DEMO_DIFF if demo else diff_from_git(base, head, repo)
+    try:
+        if demo:
+            diff = _DEMO_DIFF
+        elif diff_file:
+            diff = diff_from_file(diff_file, repo_root=repo)
+        else:
+            diff = diff_from_git(base, head, repo)
+    except DiffError as exc:
+        console.print(f"[red]Could not build diff:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+    diff = apply_filters(diff, config.include, config.exclude)
     result = review_diff(diff, config, llm)
 
     if output_json:

@@ -11,6 +11,43 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from .patch import DiffLine, added_lines, numbered
+
+# Extension -> language, used by the router and by agents choosing tools.
+_LANGS = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".java": "java",
+    ".rb": "ruby",
+    ".rs": "rust",
+    ".php": "php",
+    ".c": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cs": "csharp",
+    ".kt": "kotlin",
+    ".swift": "swift",
+    ".sh": "shell",
+    ".sql": "sql",
+}
+# Files that are never code: a change touching only these wakes no specialist.
+_DOC_EXTS = {".md", ".rst", ".txt", ".adoc"}
+_LOCKFILES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "uv.lock",
+    "Cargo.lock",
+    "go.sum",
+    "Gemfile.lock",
+    "composer.lock",
+}
+
 
 class Severity(StrEnum):
     INFO = "info"
@@ -36,6 +73,48 @@ class ChangedFile(BaseModel):
     # Unified-diff hunk text for just this file. Kept raw so agents can reason
     # over exact added/removed lines.
     patch: str = ""
+    # added | modified | deleted | renamed | binary
+    status: str = "modified"
+
+    @property
+    def added(self) -> list[DiffLine]:
+        return added_lines(self.patch)
+
+    @property
+    def numbered_patch(self) -> str:
+        return numbered(self.patch)
+
+    @property
+    def suffix(self) -> str:
+        name = self.path.rsplit("/", 1)[-1]
+        return "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+    @property
+    def language(self) -> str | None:
+        return _LANGS.get(self.suffix)
+
+    @property
+    def kind(self) -> str:
+        """code | test | docs | lock | other — drives routing."""
+        name = self.path.rsplit("/", 1)[-1]
+        if name in _LOCKFILES or self.suffix == ".lock":
+            return "lock"
+        if self.suffix in _DOC_EXTS:
+            return "docs"
+        if self.language is None:
+            return "other"
+        lowered = self.path.lower()
+        if (
+            name.startswith("test_")
+            or name.endswith(
+                ("_test.py", "_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js")
+            )
+            or "/tests/" in f"/{lowered}"
+            or "/test/" in f"/{lowered}"
+            or "/__tests__/" in f"/{lowered}"
+        ):
+            return "test"
+        return "code"
 
 
 class DiffContext(BaseModel):
