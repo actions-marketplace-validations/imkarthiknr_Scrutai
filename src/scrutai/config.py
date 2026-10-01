@@ -37,6 +37,9 @@ class ScrutaiConfig(BaseModel):
     max_critic_rounds: int = 2
     # ReAct budget per specialist: tool calls + the final answer.
     max_agent_steps: int = 4
+    # Specialists review the diff in chunks of about this many added lines
+    # (bounded prompts, per-chunk routing, more parallelism); 0 = one chunk.
+    chunk_lines: int = 250
     # Parallel critic/defense calls (specialists always fan out concurrently).
     concurrency: int = 4
     # Hard ceilings for one review; 0 disables. When hit, remaining LLM calls

@@ -28,9 +28,10 @@ from .agents import REGISTRY
 from .concurrency import parallel_map
 from .config import ScrutaiConfig
 from .critic import critique, dedupe
+from .diff import chunk_diff
 from .llm import BudgetedClient, LLMClient
 from .models import DiffContext, Finding, ReviewResult, Verdict
-from .router import route
+from .router import heuristic_route, route
 
 
 class ReviewState(TypedDict, total=False):
@@ -53,10 +54,16 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
         return {"selected": route(state["diff"], config, llm), "round": 0}
 
     def fan_out(state: ReviewState) -> list[Send] | str:
-        # One branch per selected specialist; LangGraph runs them concurrently.
-        if not state["selected"]:
-            return "collect"
-        return [Send("specialist", {"diff": state["diff"], "agent": n}) for n in state["selected"]]
+        # One branch per (specialist, chunk); LangGraph runs them concurrently.
+        # Each chunk is routed on its own, so a chunk without risky code never
+        # wakes the security agent even when another chunk did.
+        sends = [
+            Send("specialist", {"diff": chunk, "agent": name})
+            for chunk in chunk_diff(state["diff"], config.chunk_lines)
+            for name in heuristic_route(chunk, config)
+            if name in state["selected"]
+        ]
+        return sends or "collect"
 
     def specialist_node(task: SpecialistTask) -> ReviewState:
         return {"raw": REGISTRY[task["agent"]](llm, config).review(task["diff"])}

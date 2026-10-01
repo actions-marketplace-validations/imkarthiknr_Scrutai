@@ -75,6 +75,34 @@ def window(patch: str, line: int, radius: int = 3) -> str:
     )
 
 
+def slice_patch(patch: str, max_lines: int) -> list[str]:
+    """Split a patch into patches of at most `max_lines` added lines each.
+
+    Each slice keeps true new-file line numbers (one hunk per contiguous run of
+    added lines). Context and removed lines are dropped: agents only ever see
+    added lines, and the critic judges against the original, unsliced patch.
+    """
+    lines = added_lines(patch)
+    if len(lines) <= max_lines:
+        return [patch]
+    out: list[str] = []
+    for start in range(0, len(lines), max(max_lines, 1)):
+        window = lines[start : start + max_lines]
+        hunks: list[list[DiffLine]] = []
+        for d in window:
+            if hunks and d.line == hunks[-1][-1].line + 1:
+                hunks[-1].append(d)
+            else:
+                hunks.append([d])
+        out.append(
+            "".join(
+                f"@@ -0,0 +{h[0].line},{len(h)} @@\n" + "".join(f"+{d.text}\n" for d in h)
+                for h in hunks
+            )
+        )
+    return out
+
+
 def numbered(patch: str) -> str:
     """Render added lines as `L<n>: <code>` so an LLM can cite line numbers."""
     return "\n".join(f"L{d.line}: {d.text}" for d in added_lines(patch))
@@ -120,24 +148,24 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
     `**/` matches zero or more directories, `**` matches anything, `*` and `?`
     never cross a `/`.
     """
-    i, out = 0, ""
+    i, parts = 0, []
     while i < len(pattern):
         if pattern.startswith("**/", i):
-            out += "(?:.*/)?"
+            parts.append("(?:.*/)?")
             i += 3
         elif pattern.startswith("**", i):
-            out += ".*"
+            parts.append(".*")
             i += 2
         elif pattern[i] == "*":
-            out += "[^/]*"
+            parts.append("[^/]*")
             i += 1
         elif pattern[i] == "?":
-            out += "[^/]"
+            parts.append("[^/]")
             i += 1
         else:
-            out += re.escape(pattern[i])
+            parts.append(re.escape(pattern[i]))
             i += 1
-    return re.compile(f"^{out}$")
+    return re.compile(f"^{''.join(parts)}$")
 
 
 def path_selected(path: str, include: list[str], exclude: list[str]) -> bool:

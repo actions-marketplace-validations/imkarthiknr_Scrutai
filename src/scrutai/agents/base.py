@@ -157,7 +157,7 @@ class Specialist:
         )
         prior = "\n".join(f"- {e}" for e in f.evidence) or "none"
         transcript = [
-            self.context(diff),
+            self.context(_around(diff, f.file, f.line)),
             "MODE: defend",
             f"FINDING: {f.title}\nCATEGORY: {f.category}\nFILE: {f.file}\nLINE: {f.line}",
             f"BODY: {f.body}\nEVIDENCE SO FAR:\n{prior}",
@@ -189,3 +189,13 @@ class Specialist:
             )
         f.history.append("defense: none offered")
         return f
+
+
+def _around(diff: DiffContext, path: str, line: int | None, radius: int = 40) -> DiffContext:
+    """Just the finding's file, trimmed to added lines near the cited line."""
+    files = [f for f in diff.files if f.path == path]
+    if not files or line is None:
+        return diff.model_copy(update={"files": files})
+    near = [d for d in files[0].added if abs(d.line - line) <= radius]
+    patch = "".join(f"@@ -0,0 +{d.line},1 @@\n+{d.text}\n" for d in near)
+    return diff.model_copy(update={"files": [files[0].model_copy(update={"patch": patch})]})

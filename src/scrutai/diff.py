@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from .models import ChangedFile, DiffContext
-from .patch import path_selected, split_unified_diff
+from .patch import path_selected, slice_patch, split_unified_diff
 
 
 class DiffError(RuntimeError):
@@ -60,3 +60,30 @@ def apply_filters(diff: DiffContext, include: list[str], exclude: list[str]) -> 
         if f.status not in ("deleted", "binary") and path_selected(f.path, include, exclude)
     ]
     return diff.model_copy(update={"files": kept})
+
+
+def chunk_diff(diff: DiffContext, max_lines: int) -> list[DiffContext]:
+    """Pack the diff into chunks of roughly `max_lines` added lines.
+
+    Small files are packed together (so a function and its test can share a
+    chunk); a file larger than the limit is sliced on its own. Bounded chunks
+    keep every prompt small and let each chunk be routed and reviewed in
+    parallel. `max_lines <= 0` disables chunking.
+    """
+    if max_lines <= 0:
+        return [diff]
+    chunks: list[list[ChangedFile]] = []
+    size = max_lines  # forces a new chunk for the first file
+    for f in diff.files:
+        n = len(f.added)
+        if n > max_lines:
+            for part in slice_patch(f.patch, max_lines):
+                chunks.append([f.model_copy(update={"patch": part})])
+            size = max_lines
+            continue
+        if size + n > max_lines:
+            chunks.append([])
+            size = 0
+        chunks[-1].append(f)
+        size += n
+    return [diff.model_copy(update={"files": files}) for files in chunks if files] or [diff]
