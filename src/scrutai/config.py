@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .models import Severity
 
@@ -23,7 +23,9 @@ class AgentModels(BaseModel):
 
 
 class ScrutaiConfig(BaseModel):
-    enabled_agents: list[str] = Field(default_factory=lambda: ["security", "correctness", "tests"])
+    enabled_agents: list[str] = Field(
+        default_factory=lambda: ["security", "correctness", "tests", "performance", "style"]
+    )
     # Only findings at or above this severity are posted.
     min_severity: Severity = Severity.LOW
     # Only findings the critic scores at/above this survive.
@@ -43,6 +45,30 @@ class ScrutaiConfig(BaseModel):
     # "heuristic" (free, deterministic) or "llm" (the router model may narrow
     # the heuristic selection further; it can never add agents).
     routing: str = "heuristic"
+
+    @field_validator("enabled_agents")
+    @classmethod
+    def _known_agents(cls, names: list[str]) -> list[str]:
+        from .agents import REGISTRY  # local: agents import this module
+
+        unknown = [n for n in names if n not in REGISTRY]
+        if unknown:
+            raise ValueError(f"unknown agent(s) {unknown}; available: {sorted(REGISTRY)}")
+        return names
+
+    @field_validator("llm_mode")
+    @classmethod
+    def _known_mode(cls, mode: str) -> str:
+        if mode not in ("mock", "live"):
+            raise ValueError("llm_mode must be 'mock' or 'live'")
+        return mode
+
+    @field_validator("routing")
+    @classmethod
+    def _known_routing(cls, routing: str) -> str:
+        if routing not in ("heuristic", "llm"):
+            raise ValueError("routing must be 'heuristic' or 'llm'")
+        return routing
 
     @classmethod
     def load(cls, path: str | Path = ".scrutai.yml") -> ScrutaiConfig:

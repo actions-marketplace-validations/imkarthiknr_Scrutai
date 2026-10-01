@@ -29,6 +29,8 @@ class Rule:
     body: str
     #: Fixed string the security agent greps the repo for before reporting.
     probe: str = ""
+    #: Only fires on lines nested inside a for/while loop.
+    in_loop: bool = False
 
 
 def _r(pattern: str, flags: int = 0) -> re.Pattern[str]:
@@ -126,9 +128,99 @@ RULES: list[Rule] = [
         "Identity comparison with a literal",
         "`is` compares identity, not value; it only works by interning accident.",
     ),
+    # --- performance ---
+    Rule(
+        "performance",
+        "n_plus_one",
+        _r(
+            r"\.(execute|query|fetchone|fetchall)\(|\brequests\.(get|post|put|delete)\(|"
+            r"\b(session|client|http)\.(get|post)\(|\.objects\.(get|filter)\(|\bfetch\("
+        ),
+        "medium",
+        "Query or network call inside a loop",
+        "This runs once per iteration (N+1); batch it or hoist it out of the loop.",
+        in_loop=True,
+    ),
+    Rule(
+        "performance",
+        "regex_in_loop",
+        _r(r"\bre\.compile\("),
+        "low",
+        "Regex compiled inside a loop",
+        "Compile once outside the loop and reuse the pattern.",
+        in_loop=True,
+    ),
+    Rule(
+        "performance",
+        "string_concat_in_loop",
+        _r(r"\b\w+\s*\+=\s*(f?[\"']|str\()"),
+        "low",
+        "String built with += in a loop",
+        "Repeated concatenation is quadratic; collect parts and str.join them.",
+        in_loop=True,
+    ),
+    Rule(
+        "performance",
+        "sort_for_min_max",
+        _r(r"sorted\([^)]*\)\[(0|-1)\]"),
+        "low",
+        "Sorting to take the min/max",
+        "sorted(...)[0] is O(n log n); min()/max() is O(n).",
+    ),
+    # --- style ---
+    Rule(
+        "style",
+        "debug_leftover",
+        _r(
+            r"^\s*(print\(|breakpoint\(\)|pdb\.set_trace\(\)|import pdb\b|console\.log\(|debugger;)"
+        ),
+        "low",
+        "Debug leftover",
+        "Debug output/breakpoints should not ship in library code; use logging.",
+    ),
+    Rule(
+        "style",
+        "wildcard_import",
+        _r(r"^\s*from\s+\S+\s+import\s+\*"),
+        "low",
+        "Wildcard import",
+        "`import *` hides where names come from and can shadow builtins.",
+    ),
+    Rule(
+        "style",
+        "untracked_todo",
+        _r(r"(#|//)\s*(TODO|FIXME|XXX)\b"),
+        "info",
+        "TODO without a ticket",
+        "Link a ticket so this does not rot.",
+    ),
 ]
 
 RULES_BY_CATEGORY = {r.category: r for r in RULES}
+_LOOP = re.compile(r"^\s*(?:async\s+)?(for|while)\b")
+_SCOPE = re.compile(r"^\s*(?:async\s+)?(def|class|function)\b")
+
+
+def enclosing_loop(lines: list[SrcLine], idx: int) -> SrcLine | None:
+    """The nearest for/while header that `lines[idx]` is nested under, if any."""
+    target = lines[idx]
+    indent = len(target.text) - len(target.text.lstrip())
+    for j in range(idx - 1, -1, -1):
+        cand = lines[j]
+        if cand.file != target.file:
+            break
+        if not cand.text.strip():
+            continue
+        cand_indent = len(cand.text) - len(cand.text.lstrip())
+        if cand_indent >= indent:
+            continue
+        if _LOOP.match(cand.text):
+            return cand
+        if _SCOPE.match(cand.text):
+            return None
+        indent = cand_indent
+    return None
+
 
 _FILE = re.compile(r"^=== FILE (\S+) \[([^\]]*)\]")
 _LINE = re.compile(r"^L(\d+): (.*)$")
@@ -219,12 +311,18 @@ class MockLLMClient:
 
     def _rules(self, agent: str, prompt: str) -> dict[str, Any]:
         lines = parse_files(prompt)
-        hits = [
-            (rule, src)
-            for src in lines
-            for rule in RULES
-            if rule.agent == agent and rule.pattern.search(src.text)
-        ]
+        hits: list[tuple[Rule, SrcLine]] = []
+        loops: dict[int, SrcLine] = {}
+        for idx, src in enumerate(lines):
+            for rule in RULES:
+                if rule.agent != agent or not rule.pattern.search(src.text):
+                    continue
+                if rule.in_loop:
+                    loop = enclosing_loop(lines, idx)
+                    if loop is None:
+                        continue
+                    loops[len(hits)] = loop
+                hits.append((rule, src))
         observations = _observations(prompt)
         probed = [(rule, src) for rule, src in hits if rule.probe]
         # ReAct: a careful security reviewer looks for other call sites first.
@@ -240,7 +338,22 @@ class MockLLMClient:
         if observations:
             n = sum(1 for ln in observations[-1].splitlines() if ":" in ln and ln[:1] != "(")
             extra.append(f"grep: {n} call site(s) of this sink in the repo")
-        findings = [_finding(rule, src, extra, 0.7) for rule, src in hits]
+        findings = [
+            _finding(
+                rule,
+                src,
+                [
+                    *extra,
+                    *(
+                        [f"inside loop at L{lp.line}: {lp.text.strip()}"]
+                        if (lp := loops.get(i))
+                        else []
+                    ),
+                ],
+                0.7,
+            )
+            for i, (rule, src) in enumerate(hits)
+        ]
         return {"thought": f"{len(findings)} issue(s) on added lines.", "findings": findings}
 
     def _tests(self, prompt: str) -> dict[str, Any]:
@@ -338,7 +451,7 @@ class MockLLMClient:
             # Secrets and SQL live *in* strings; everything else must survive
             # with string contents blanked out.
             keep_strings = category in ("hardcoded_secret", "sql_injection")
-            code = strip_code(cited, keep_strings=keep_strings)
+            code = cited if category == "untracked_todo" else strip_code(cited, keep_strings)
             if not rule.pattern.search(code):
                 return kill(0.15, "Pattern only appears in a comment or string literal.")
         if category == "hardcoded_secret":
@@ -351,6 +464,18 @@ class MockLLMClient:
                 return kill(0.2, "Placeholder or test-fixture value, not a real credential.")
         if category == "injection" and _CONSTANT_SINK.search(cited):
             return kill(0.3, "The command is a constant literal; no untrusted input reaches it.")
+        if category == "debug_leftover" and _SCRIPT_PATH.search(fields.get("FILE", "")):
+            return kill(0.2, "This is a CLI/script; printing is its output channel.")
+        if category == "untracked_todo" and _TICKET.search(cited):
+            return kill(0.1, "The TODO already references a ticket.")
+        if (
+            rule is not None
+            and rule.in_loop
+            and not _LOOP_IN_LISTING.search(
+                _block(prompt, "CONTEXT:") + _block(prompt, "EVIDENCE:")
+            )
+        ):
+            return kill(0.25, "No enclosing loop is visible; the call runs once.")
         if category == "weak_crypto" and "usedforsecurity=False" in cited:
             return kill(0.2, "Explicitly marked usedforsecurity=False.")
 
@@ -385,6 +510,10 @@ _CONSTANT_SINK = re.compile(
     r"\b(os\.system|os\.popen|eval|exec)\(\s*([\"'])[^\"']*\2\s*\)"
     r"|subprocess\.\w+\(\s*([\"'])[^\"']*\3\s*,"
 )
+# A loop header inside a numbered listing ("+L3:     for x in y:") or evidence.
+_LOOP_IN_LISTING = re.compile(r"L\d+:\s+(?:async\s+)?(for|while)\b")
+_SCRIPT_PATH = re.compile(r"(^|/)(cli|__main__|manage)\.py\b|(^|/)(scripts?|bin)/")
+_TICKET = re.compile(r"#\d+|\b[A-Z][A-Z0-9]+-\d+\b|https?://")
 _PLACEHOLDER = re.compile(
     r"^(x+|\*+|<.*>|\$\{.*\}|\{\{.*\}\}|your[-_ ].*|.*(example|dummy|placeholder|"
     r"changeme|fake|sample|redacted).*|test.*)$",

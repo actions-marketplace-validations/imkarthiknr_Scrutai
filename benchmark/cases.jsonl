@@ -33,6 +33,18 @@
 {"id": "test-01", "file": "calc.py", "patch": "+def discount(price, pct):\n+    return price * (1 - pct)\n", "labels": ["missing_tests"]}
 {"id": "trap-test-exists", "file": "calc.py", "patch": "+def discount(price, pct):\n+    return price * (1 - pct)\n", "labels": [], "repo": {"tests/test_calc.py": "from calc import discount\n\n\ndef test_discount():\n    assert discount is not None\n"}, "note": "already covered by an existing test in the repo"}
 {"id": "trap-test-private", "file": "calc.py", "patch": "+def _round2(x):\n+    return round(x, 2)\n", "labels": [], "note": "private helper"}
+{"id": "perf-n1-sql", "file": "report.py", "patch": "+def _names(cur, user_ids):\n+    out = []\n+    for uid in user_ids:\n+        out.append(cur.execute(\"SELECT name FROM users WHERE id = ?\", (uid,)).fetchone())\n+    return out\n", "labels": ["n_plus_one"], "note": "one query per id"}
+{"id": "perf-n1-http", "file": "sync.py", "patch": "+def _pull(urls):\n+    for url in urls:\n+        resp = requests.get(url, timeout=5)\n+        yield resp.json()\n", "labels": ["n_plus_one"]}
+{"id": "trap-perf-hoisted-query", "file": "report.py", "patch": "+def _names(cur):\n+    rows = cur.execute(\"SELECT name FROM users\").fetchall()\n+    names = []\n+    for row in rows:\n+        names.append(row[0])\n+    return names\n", "labels": [], "note": "query hoisted out of the loop"}
+{"id": "perf-regex", "file": "logs.py", "patch": "+def _count(lines):\n+    n = 0\n+    for line in lines:\n+        if re.compile(r\"ERROR \\d+\").match(line):\n+            n += 1\n+    return n\n", "labels": ["regex_in_loop"]}
+{"id": "trap-perf-regex-hoisted", "file": "logs.py", "patch": "+_ERR = re.compile(r\"ERROR \\d+\")\n+\n+def _count(lines):\n+    return sum(1 for line in lines if _ERR.match(line))\n", "labels": []}
+{"id": "perf-concat", "file": "csvout.py", "patch": "+def _row(parts):\n+    out = \"\"\n+    for part in parts:\n+        out += f\"{part},\"\n+    return out\n", "labels": ["string_concat_in_loop"]}
+{"id": "trap-perf-concat-in-string", "file": "csvout.py", "patch": "+def _row(parts):\n+    for part in parts:\n+        log.debug(\"out += 'x' is quadratic\")\n", "labels": [], "note": "pattern only inside a log message"}
+{"id": "perf-sort", "file": "leader.py", "patch": "+best = sorted(scores)[-1]\n", "labels": ["sort_for_min_max"]}
+{"id": "style-print", "file": "lib/pricing.py", "patch": "+total = base * (1 + tax)\n+print(f\"debug total={total}\")\n", "labels": ["debug_leftover"]}
+{"id": "style-breakpoint", "file": "lib/pricing.py", "patch": "+total = base * (1 + tax)\n+breakpoint()\n", "labels": ["debug_leftover"]}
+{"id": "trap-style-cli-print", "file": "cli.py", "patch": "+print(\"Done.\")\n", "labels": [], "note": "printing is a CLI's job"}
+{"id": "style-wildcard", "file": "geo.py", "patch": "+from math import *\n", "labels": ["wildcard_import"]}
 {"id": "clean-01", "file": "readme.py", "patch": "+# Updated the module docstring for clarity.\n+\"\"\"Utility helpers.\"\"\"\n", "labels": []}
 {"id": "clean-02", "file": "calc.py", "patch": "+def _area(w, h):\n+    width, height = w, h\n+    return width * height\n", "labels": []}
 {"id": "clean-docs-only", "file": "docs/guide.md", "patch": "+## Install\n+Run `pip install scrutai`, then never `eval(input())`.\n", "labels": [], "note": "docs-only change: router wakes nobody"}

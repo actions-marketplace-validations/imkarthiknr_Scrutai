@@ -1,5 +1,5 @@
 # Scrutai configuration. All values shown are defaults — delete any you don't override.
-enabled_agents: [security, correctness, tests]
+enabled_agents: [security, correctness, tests, performance, style]
 min_severity: low
 min_confidence: 0.6
 max_critic_rounds: 2
