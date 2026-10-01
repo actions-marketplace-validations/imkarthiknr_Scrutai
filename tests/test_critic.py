@@ -86,11 +86,10 @@ def test_downgrade_only_lowers_severity() -> None:
     assert up.severity == Severity.HIGH
 
 
-def test_unparseable_critic_keeps_specialist_confidence() -> None:
-    f = judge(
-        Critic("¯\\_(ツ)_/¯"), ScrutaiConfig(min_confidence=0.6), _finding(confidence=0.4), DIFF, 1
-    )
-    assert f.confidence == 0.4 and not f.alive
+def test_unjudged_finding_is_withheld() -> None:
+    f = judge(Critic("¯\\_(ツ)_/¯"), ScrutaiConfig(), _finding(confidence=0.99), DIFF, 1)
+    assert not f.alive and f.unjudged
+    assert "withheld" in (f.critic_note or "")
 
 
 def test_judge_does_not_mutate_input() -> None:

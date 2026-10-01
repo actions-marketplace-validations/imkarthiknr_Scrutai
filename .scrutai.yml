@@ -3,7 +3,9 @@ enabled_agents: [security, correctness, tests, performance, style]
 min_severity: low
 min_confidence: 0.6
 max_critic_rounds: 2
-token_budget: 200000
+token_budget: 200000   # hard cap per review; 0 disables
+max_cost_usd: 0.0      # optional dollar cap (live mode); 0 disables
+concurrency: 4         # parallel critic/defense calls
 fail_on: high
 llm_mode: mock        # switch to "live" and export a provider key to run for real
 routing: heuristic    # or "llm": the router model may narrow the selection further

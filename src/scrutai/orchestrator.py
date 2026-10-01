@@ -28,7 +28,7 @@ from .agents import REGISTRY
 from .concurrency import parallel_map
 from .config import ScrutaiConfig
 from .critic import critique, dedupe
-from .llm import LLMClient
+from .llm import BudgetedClient, LLMClient
 from .models import DiffContext, Finding, ReviewResult, Verdict
 from .router import route
 
@@ -93,6 +93,7 @@ def build_graph(llm: LLMClient, config: ScrutaiConfig) -> Any:
             dropped=[f for f in findings if not f.alive],
             summary=_summarize(survivors, state.get("selected", [])),
             tokens_used=llm.tokens_used,
+            cost_usd=round(llm.cost_usd, 6),
             rounds=state.get("round", 0),
             agents=state.get("selected", []),
         )
@@ -141,8 +142,14 @@ def _summarize(findings: list[Finding], agents: list[str]) -> str:
 
 
 def review_diff(diff: DiffContext, config: ScrutaiConfig, llm: LLMClient) -> ReviewResult:
-    """Convenience entry point used by the CLI and the eval harness."""
-    graph = build_graph(llm, config)
+    """Review one diff. The entry point the CLI, the Action and the eval harness share."""
+    budgeted = BudgetedClient(llm, config.token_budget, config.max_cost_usd)
+    graph = build_graph(budgeted, config)
     final = graph.invoke({"diff": diff})
     result: ReviewResult = final["result"]
+    if budgeted.exhausted:
+        result.budget_exhausted = True
+        result.summary += (
+            f" Budget exhausted ({budgeted.tokens_used} tokens): this review is partial."
+        )
     return result

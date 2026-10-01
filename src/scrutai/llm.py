@@ -101,6 +101,45 @@ class LiteLLMClient:
         return str(content)
 
 
+class BudgetExceeded(LLMError):
+    """The review hit its token or dollar budget; no further calls are made."""
+
+
+class BudgetedClient:
+    """Wraps any client and refuses calls once a budget is spent.
+
+    The check happens before each call, so concurrent calls can overshoot by
+    at most one call each: a soft cap that never runs away.
+    """
+
+    def __init__(self, inner: LLMClient, token_budget: int, max_cost_usd: float = 0.0) -> None:
+        self.inner = inner
+        self.token_budget = token_budget
+        self.max_cost_usd = max_cost_usd
+        self.exhausted = False
+        self._lock = threading.Lock()
+
+    @property
+    def tokens_used(self) -> int:
+        return self.inner.tokens_used
+
+    @property
+    def cost_usd(self) -> float:
+        return self.inner.cost_usd
+
+    def complete(self, *, model: str, system: str, prompt: str) -> str:
+        with self._lock:
+            over_tokens = self.token_budget > 0 and self.inner.tokens_used >= self.token_budget
+            over_cost = self.max_cost_usd > 0 and self.inner.cost_usd >= self.max_cost_usd
+            if over_tokens or over_cost:
+                self.exhausted = True
+            if self.exhausted:
+                raise BudgetExceeded(
+                    f"budget spent: {self.inner.tokens_used} tokens, ${self.inner.cost_usd:.4f}"
+                )
+        return self.inner.complete(model=model, system=system, prompt=prompt)
+
+
 def make_client(mode: str) -> LLMClient:
     if mode == "live":
         return LiteLLMClient()
@@ -112,4 +151,13 @@ def make_client(mode: str) -> LLMClient:
 # Re-exported so `from scrutai.llm import MockLLMClient` keeps working.
 from .mock import MockLLMClient  # noqa: E402
 
-__all__ = ["LLMClient", "LLMError", "LiteLLMClient", "MockLLMClient", "extract_json", "make_client"]
+__all__ = [
+    "BudgetExceeded",
+    "BudgetedClient",
+    "LLMClient",
+    "LLMError",
+    "LiteLLMClient",
+    "MockLLMClient",
+    "extract_json",
+    "make_client",
+]

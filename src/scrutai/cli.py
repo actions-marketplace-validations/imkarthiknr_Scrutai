@@ -46,9 +46,11 @@ def _render(result: ReviewResult) -> None:
     console.print(
         f"[bold]Verdict:[/bold] {result.verdict.value}   "
         f"[dim]agents={','.join(result.agents) or '-'} rounds={result.rounds} "
-        f"tokens={result.tokens_used}[/dim]"
+        f"tokens={result.tokens_used} cost=${result.cost_usd:.4f}[/dim]"
     )
     console.print(f"[italic]{result.summary}[/italic]")
+    if result.budget_exhausted:
+        console.print("[yellow]Budget exhausted: this review is partial.[/yellow]")
     if result.dropped:
         console.print(f"[dim]The critic dropped {len(result.dropped)} finding(s).[/dim]")
     console.print()

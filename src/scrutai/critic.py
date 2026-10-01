@@ -89,10 +89,15 @@ def judge(
         decision = str(verdict.get("decision", "uphold")).lower()
         f.confidence = min(max(float(verdict.get("confidence", f.confidence)), 0.0), 1.0)
         note = str(verdict.get("note", "")).strip()
-    except (LLMError, json.JSONDecodeError, TypeError, ValueError):
-        # A critic that can't answer must not silently bless a finding: keep the
-        # specialist's own confidence and let the threshold decide.
-        decision, note = "uphold", "critic unavailable; specialist confidence kept"
+    except (LLMError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        # Every finding survives scrutiny or it doesn't ship: one the critic
+        # could not judge (provider error, garbage reply, budget spent) is
+        # withheld, never passed through on the specialist's word alone.
+        f.alive = f.contested = False
+        f.unjudged = True
+        f.critic_note = f"not cross-examined ({type(exc).__name__}); withheld"
+        f.history.append(f"round {round_no}: unjudged {exc!s}"[:200])
+        return f
 
     f.critic_note = note or decision
     f.history.append(f"round {round_no}: {decision} ({f.confidence:.2f}) {note}".rstrip())

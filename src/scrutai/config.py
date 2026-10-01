@@ -38,7 +38,10 @@ class ScrutaiConfig(BaseModel):
     max_agent_steps: int = 4
     # Parallel critic/defense calls (specialists always fan out concurrently).
     concurrency: int = 4
+    # Hard ceilings for one review; 0 disables. When hit, remaining LLM calls
+    # are skipped and the result is marked partial.
     token_budget: int = 200_000
+    max_cost_usd: float = 0.0
     # Severity at which the CLI/Action exits non-zero (fails CI).
     fail_on: Severity = Severity.HIGH
     # "mock" runs the whole pipeline offline with canned findings; "live" calls

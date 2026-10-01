@@ -156,6 +156,8 @@ class Finding(BaseModel):
     challenge: str | None = None
     defense: str | None = None
     history: list[str] = Field(default_factory=list)
+    # True when the critic could not judge it (error/budget); such findings are dropped.
+    unjudged: bool = False
 
     def key(self) -> tuple[str, int | None, str]:
         """Identity used for deduplication across agents.
@@ -180,6 +182,8 @@ class ReviewResult(BaseModel):
     # Findings the critic killed (or specialists withdrew), kept for audit
     # and for measuring how much noise the critic removes.
     dropped: list[Finding] = Field(default_factory=list)
+    # The token/cost budget ran out; some agents or judgements were skipped.
+    budget_exhausted: bool = False
 
     def by_severity(self) -> dict[str, int]:
         counts: dict[str, int] = {}
