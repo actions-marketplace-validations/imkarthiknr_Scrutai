@@ -56,3 +56,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+filterwarnings = [
+    # Emitted inside litellm's own pydantic models; not actionable here.
+    "ignore:Item 'summary' on TypedDict class:UserWarning",
+]
