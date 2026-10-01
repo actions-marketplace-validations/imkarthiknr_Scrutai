@@ -14,7 +14,7 @@ semgrep: auto         # auto | off | required
 semgrep_config: bundled   # or any semgrep --config value, e.g. p/default
 include: ["**/*"]
 exclude: ["**/vendor/**", "**/*.lock", "**/dist/**"]
-models:
-  router: gpt-4o-mini
-  specialist: gpt-4o-mini
-  critic: claude-3-5-sonnet-latest
+models:                 # any LiteLLM model string; cheap router, strong critic
+  router: anthropic/claude-haiku-4-5
+  specialist: anthropic/claude-sonnet-5-5
+  critic: anthropic/claude-opus-5-5

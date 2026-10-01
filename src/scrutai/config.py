@@ -17,9 +17,10 @@ from .models import Severity
 class AgentModels(BaseModel):
     # A cheap model routes; a strong model runs the critic. Per-role models keep
     # cost down without sacrificing the judgement that matters.
-    router: str = "gpt-4o-mini"
-    specialist: str = "gpt-4o-mini"
-    critic: str = "claude-3-5-sonnet-latest"
+    # Any LiteLLM model string works (OpenAI, Gemini, local, ...).
+    router: str = "anthropic/claude-haiku-4-5"
+    specialist: str = "anthropic/claude-sonnet-5-5"
+    critic: str = "anthropic/claude-opus-5-5"
 
 
 class ScrutaiConfig(BaseModel):

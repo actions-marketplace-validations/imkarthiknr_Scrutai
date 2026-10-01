@@ -81,7 +81,8 @@ class LiteLLMClient:
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0,
+                # No temperature: current Claude models reject non-default
+                # sampling params; determinism comes from the critic, not sampling.
                 num_retries=2,
             )
         except Exception as exc:  # provider SDKs raise many unrelated types
