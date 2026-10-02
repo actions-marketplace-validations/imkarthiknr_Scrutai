@@ -6,6 +6,8 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from scrutai.agents import CorrectnessAgent, SecurityAgent, TestCoverageAgent
 from scrutai.config import ScrutaiConfig
 from scrutai.llm import MockLLMClient
@@ -135,3 +137,23 @@ def test_mock_tests_agent_credits_tests_in_same_diff() -> None:
         ]
     )
     assert TestCoverageAgent(MockLLMClient(), ScrutaiConfig()).review(diff) == []
+
+
+def test_grep_works_without_ripgrep_or_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """CI runners and bare checkouts may have neither; tools must not go blind."""
+    import scrutai.tools.repo as repo
+
+    monkeypatch.setattr(repo.shutil, "which", lambda name: None)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text("def test_add():\n    add(1, 2)\n")
+    (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+    (tmp_path / "blob.bin").write_bytes(b"\xff\xfeadd\x00")
+    assert repo.grep("add(", str(tmp_path)) == [
+        "calc.py:1:def add(a, b):",
+        "tests/test_calc.py:1:def test_add():",
+        "tests/test_calc.py:2:    add(1, 2)",
+    ]
+    assert repo.grep(r"\badd\b", str(tmp_path), regex=True, glob="*test*") == [
+        "tests/test_calc.py:2:    add(1, 2)"
+    ]
+    assert repo.grep("(", str(tmp_path), regex=True) == []  # invalid regex, no crash
