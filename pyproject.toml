@@ -5,7 +5,7 @@ description = "Multi-agent code reviewer that puts every finding on trial before
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Karthik N R", email = "you@example.com" }]
+authors = [{ name = "Karthik N R", email = "karthik180499@gmail.com" }]
 keywords = ["multi-agent", "code-review", "langgraph", "react-agent", "llm", "self-reflection"]
 dependencies = [
     "langgraph>=0.2.0",
