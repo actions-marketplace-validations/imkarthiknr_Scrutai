@@ -1,58 +1,103 @@
 """`scrutai` command line.
 
-    scrutai review --base main            # review working branch vs main
-    scrutai review --demo                 # run on the bundled sample diff
-    scrutai eval                          # run the benchmark, print precision/FPR
+scrutai review --base main                # review working branch vs main
+scrutai review --demo                     # run on the bundled sample diff
+scrutai review --diff pr.patch -f sarif   # review a patch file, emit SARIF
+scrutai eval --min-precision 0.9          # run the benchmark as a CI gate
 """
 
 from __future__ import annotations
 
 import json
+import os
+from enum import StrEnum
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 from .config import ScrutaiConfig
-from .diff import diff_from_git
+from .demo import review_demo
+from .diff import DiffError, apply_filters, diff_from_file, diff_from_git, parse_diff
+from .github import GitHubClient, GitHubError, PullRequest, detect_repo, publish
 from .llm import make_client
-from .models import ChangedFile, DiffContext
+from .models import ReviewResult
 from .orchestrator import review_diff
+from .report import location, to_markdown, to_sarif_json
+from .tools.semgrep import available as semgrep_available
+from .trace import Tracer, enable_langfuse
 
 app = typer.Typer(add_completion=False, help="Multi-agent code review with an adversarial critic.")
 console = Console()
 
-_DEMO_DIFF = DiffContext(
-    files=[
-        ChangedFile(
-            path="app/runner.py",
-            patch=(
-                "+def run(cmd):\n"
-                "+    import os\n"
-                "+    try:\n"
-                "+        return os.system(cmd)\n"
-                "+    except Exception:\n"
-                "+        return -1\n"
-            ),
+
+class Format(StrEnum):
+    table = "table"
+    json = "json"
+    markdown = "markdown"
+    sarif = "sarif"
+
+
+def _render_table(result: ReviewResult, show_dropped: bool) -> None:
+    console.print(
+        f"[bold]Verdict:[/bold] {result.verdict.value}   "
+        f"[dim]agents={','.join(result.agents) or '-'} rounds={result.rounds} "
+        f"tokens={result.tokens_used} cost=${result.cost_usd:.4f}[/dim]"
+    )
+    console.print(f"[italic]{result.summary}[/italic]")
+    if result.budget_exhausted:
+        console.print("[yellow]Budget exhausted: this review is partial.[/yellow]")
+    if result.dropped and not show_dropped:
+        console.print(
+            f"[dim]The critic dropped {len(result.dropped)} finding(s); "
+            "--show-dropped to see them.[/dim]"
         )
-    ]
-)
+    console.print()
+    if result.findings:
+        table = Table(show_lines=False)
+        for col in ("Severity", "Agent", "Conf", "File:Line", "Finding"):
+            table.add_column(col)
+        for f in result.findings:
+            table.add_row(f.severity.value, f.agent, f"{f.confidence:.2f}", location(f), f.title)
+        console.print(table)
+    if show_dropped and result.dropped:
+        table = Table(title="Dropped by the critic", show_lines=False)
+        for col in ("Agent", "File:Line", "Finding", "Why"):
+            table.add_column(col)
+        for f in result.dropped:
+            table.add_row(f.agent, location(f), f.title, f.critic_note or "")
+        console.print(table)
 
 
-def _render(result) -> None:
-    console.print(f"[bold]Verdict:[/bold] {result.verdict.value}   "
-                  f"[dim]rounds={result.rounds} tokens={result.tokens_used}[/dim]")
-    console.print(f"[italic]{result.summary}[/italic]\n")
-    if not result.findings:
+def _emit(result: ReviewResult, fmt: Format, output: str | None, show_dropped: bool) -> None:
+    if fmt == Format.table and not output:
+        _render_table(result, show_dropped)
         return
-    table = Table(show_lines=False)
-    for col in ("Severity", "Agent", "Conf", "File:Line", "Finding"):
-        table.add_column(col)
-    for f in result.findings:
-        loc = f"{f.file}:{f.line}" if f.line else f.file
-        table.add_row(f.severity.value, f.agent, f"{f.confidence:.2f}", loc, f.title)
-    console.print(table)
+    if fmt == Format.json:
+        text = result.model_dump_json(indent=2)
+    elif fmt == Format.sarif:
+        text = to_sarif_json(result)
+    else:  # markdown (also what --output gets when the format is "table")
+        text = to_markdown(result, show_dropped)
+    if output:
+        Path(output).write_text(text + ("" if text.endswith("\n") else "\n"))
+        console.print(f"[dim]Wrote {fmt.value} report to {output}[/dim]")
+    else:
+        typer.echo(text)
+
+
+def _make_tracer(config: ScrutaiConfig, path: str | None) -> Tracer | None:
+    if config.tracing == "langfuse" and config.llm_mode == "live":
+        enable_langfuse()
+    if path is None and config.tracing != "otel":
+        return None
+    try:
+        return Tracer(jsonl=path, otel=config.tracing == "otel")
+    except (RuntimeError, OSError) as exc:
+        console.print(f"[red]Tracing:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
 
 
 @app.command()
@@ -61,35 +106,192 @@ def review(
     head: str = typer.Option("HEAD", help="Head ref."),
     repo: str = typer.Option(".", help="Repo root."),
     demo: bool = typer.Option(False, help="Review a bundled sample diff instead of git."),
-    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    diff_file: str | None = typer.Option(
+        None, "--diff", help="Review a unified diff file instead of git ('-' reads stdin)."
+    ),
+    fmt: Format = typer.Option(Format.table, "--format", "-f", help="Output format."),
+    output_json: bool = typer.Option(False, "--json", help="Shorthand for --format json."),
+    output: str | None = typer.Option(None, "--output", "-o", help="Write the report to a file."),
+    show_dropped: bool = typer.Option(False, help="Also list findings the critic killed."),
+    pr: int | None = typer.Option(None, "--pr", help="Review a GitHub pull request by number."),
+    post: bool = typer.Option(False, help="With --pr: post the summary and inline comments."),
+    github_repo: str | None = typer.Option(
+        None, help="owner/name for --pr (default: GITHUB_REPOSITORY or the origin remote)."
+    ),
+    trace: str | None = typer.Option(None, help="Write a JSONL trace of every step here."),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
-    config = ScrutaiConfig.load(config_path)
-    llm = make_client(config.llm_mode)
-    diff = _DEMO_DIFF if demo else diff_from_git(base, head, repo)
-    result = review_diff(diff, config, llm)
+    """Review a git range, a patch file, a GitHub PR, or the bundled demo.
 
+    Exit codes: 0 ok, 1 a finding at or above fail_on, 2 usage/diff/API error.
+    """
+    config = _load_config(config_path)
     if output_json:
-        console.print_json(result.model_dump_json())
+        fmt = Format.json
+    if post and pr is None:
+        console.print("[red]--post needs --pr[/red]")
+        raise typer.Exit(code=2)
+    gh: tuple[GitHubClient, PullRequest] | None = None
+    tracer = _make_tracer(config, trace)
+    if demo:
+        result = review_demo(config, tracer)
     else:
-        _render(result)
+        try:
+            if pr is not None:
+                client = GitHubClient(
+                    os.environ.get("GITHUB_TOKEN", ""),
+                    github_repo or detect_repo(repo),
+                    os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+                )
+                pull = client.pull_request(pr)
+                diff = parse_diff(client.pull_request_diff(pr), repo_root=repo, head=pull.head_sha)
+                gh = (client, pull)
+            elif diff_file:
+                diff = diff_from_file(diff_file, repo_root=repo)
+            else:
+                diff = diff_from_git(base, head, repo)
+        except (DiffError, GitHubError) as exc:
+            console.print(f"[red]Could not build diff:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+        diff = apply_filters(diff, config.include, config.exclude)
+        result = review_diff(diff, config, make_client(config.llm_mode), tracer)
+        if gh is not None and post:
+            try:
+                rep = publish(gh[0], gh[1], result, diff)
+            except GitHubError as exc:
+                console.print(f"[red]Could not post review:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
+            console.print(
+                f"[dim]PR #{pr}: summary {rep.summary}, {rep.posted} new inline comment(s), "
+                f"{rep.skipped_duplicates} already posted, {rep.skipped_off_diff} off-diff.[/dim]"
+            )
 
+    if tracer is not None:
+        tracer.close()
+    _emit(result, fmt, output, show_dropped)
     if any(f.severity.rank >= config.fail_on.rank for f in result.findings):
         raise typer.Exit(code=1)
 
 
-@app.command("eval")
-def eval_cmd(
-    benchmark: str = typer.Option("benchmark/cases.jsonl", help="Labeled cases."),
+def _load_config(path: str) -> ScrutaiConfig:
+    try:
+        config = ScrutaiConfig.load(path)
+    except (ValueError, OSError) as exc:  # pydantic ValidationError is a ValueError
+        console.print(f"[red]Invalid config {path}:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+    if config.semgrep == "required" and not semgrep_available():
+        console.print("[red]semgrep: required by config but not installed[/red]")
+        raise typer.Exit(code=2)
+    return config
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Interface to bind (keep it local)."),
+    port: int = typer.Option(8765, help="Port."),
+    repo: str = typer.Option(".", help="Repo root for git-range and PR runs."),
+    replay: str | None = typer.Option(None, help="Preload a --trace JSONL file as a run."),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
-    from .eval.harness import run_benchmark
+    """Open the agent theater: start reviews and watch the panel work, live."""
+    _load_config(config_path)  # fail fast on a bad config
+    try:
+        import uvicorn
+
+        from .web.server import Run, RunStore, create_app, load_trace
+    except ImportError as exc:
+        console.print('[red]The web UI needs extras:[/red] pip install "scrutai[web]"')
+        raise typer.Exit(code=2) from exc
+
+    store = RunStore()
+    if replay:
+        try:
+            events = load_trace(Path(replay).read_text())
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Cannot replay {replay}:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+        run = Run(id=str(events[0].get("run", "replay")), source="replay", label=Path(replay).name)
+        for e in events:
+            run.append(e)
+        run.status = "done"
+        store.add(run)
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(
+            "[yellow]Warning:[/yellow] binding beyond localhost exposes your repo and API budget."
+        )
+    console.print(f"Scrutai theater on [bold]http://{host}:{port}[/bold]  (Ctrl+C to stop)")
+    uvicorn.run(create_app(config_path, repo, store), host=host, port=port, log_level="warning")
+
+
+@app.command("eval")
+def eval_cmd(
+    benchmark: str = typer.Option("benchmark/cases.jsonl", help="Labeled cases (JSONL)."),
+    config_path: str = typer.Option(".scrutai.yml", "--config"),
+    min_precision: float = typer.Option(0.0, help="Exit 1 if precision falls below this."),
+    min_recall: float = typer.Option(0.0, help="Exit 1 if recall falls below this."),
+    report: str | None = typer.Option(None, help="Also write a markdown report here."),
+    output_json: bool = typer.Option(False, "--json", help="Emit metrics as JSON."),
+    compare: str | None = typer.Option(
+        None, help="Also run every agent on this backend (e.g. crewai) and compare."
+    ),
+) -> None:
+    """Run the labeled benchmark and report precision / recall / critic lift."""
+    from .eval.harness import (
+        CaseResult,
+        compare_backends,
+        compare_markdown,
+        markdown_report,
+        run_benchmark,
+    )
 
     if not Path(benchmark).exists():
         console.print(f"[red]No benchmark at {benchmark}[/red]")
+        raise typer.Exit(code=2)
+    if compare:
+        try:
+            comparison = compare_backends(benchmark, _load_config(config_path), ["native", compare])
+        except (ValueError, RuntimeError) as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2) from exc
+        md = compare_markdown(comparison)
+        if report:
+            Path(report).write_text(md)
+        if output_json:
+            typer.echo(json.dumps(comparison, indent=2))
+        else:
+            console.print(Markdown(md))
+        bad = [
+            f"{b}: precision {m['precision']} recall {m['recall']}"
+            for b, m in comparison["backends"].items()
+            if m["precision"] < min_precision or m["recall"] < min_recall
+        ]
+        if bad:
+            console.print(f"[red]Benchmark gate failed:[/red] {'; '.join(bad)}")
+            raise typer.Exit(code=1)
+        return
+    details: list[CaseResult] = []
+    try:
+        metrics = run_benchmark(benchmark, _load_config(config_path), details)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    md = markdown_report(metrics, details)
+    if report:
+        Path(report).write_text(md)
+    if output_json:
+        typer.echo(json.dumps(metrics, indent=2))
+    else:
+        console.print(Markdown(md))
+
+    failed = []
+    if metrics["precision"] < min_precision:
+        failed.append(f"precision {metrics['precision']} < {min_precision}")
+    if metrics["recall"] < min_recall:
+        failed.append(f"recall {metrics['recall']} < {min_recall}")
+    if failed:
+        console.print(f"[red]Benchmark gate failed:[/red] {'; '.join(failed)}")
         raise typer.Exit(code=1)
-    metrics = run_benchmark(benchmark, ScrutaiConfig.load(config_path))
-    console.print_json(json.dumps(metrics))
 
 
 if __name__ == "__main__":

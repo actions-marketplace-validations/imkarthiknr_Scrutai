@@ -8,8 +8,40 @@ harness, which compares models) and lets every test run offline against
 
 from __future__ import annotations
 
+import contextlib
 import json
-from typing import Protocol, runtime_checkable
+import re
+import threading
+from typing import Any, Protocol, runtime_checkable
+
+
+class LLMError(RuntimeError):
+    """A provider call failed (network, auth, rate limit, empty response)."""
+
+
+_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+def extract_json(raw: str) -> dict[str, Any]:
+    """Parse the JSON object in a model reply.
+
+    Real models wrap JSON in ```json fences or add a sentence before it; accept
+    both. Raises json.JSONDecodeError if no object can be recovered.
+    """
+    text = raw.strip()
+    fenced = _FENCE.search(text)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        value = json.loads(text[start : end + 1])
+    if not isinstance(value, dict):
+        raise json.JSONDecodeError("expected a JSON object", text, 0)
+    return value
 
 
 @runtime_checkable
@@ -19,77 +51,8 @@ class LLMClient(Protocol):
     @property
     def tokens_used(self) -> int: ...
 
-
-class MockLLMClient:
-    """Deterministic offline client.
-
-    Returns canned findings keyed off substrings in the prompt so the full
-    pipeline runs end-to-end with no API key. Swap for `LiteLLMClient` to go
-    live. This is also what the deterministic tests run against.
-    """
-
-    def __init__(self) -> None:
-        self._tokens = 0
-
     @property
-    def tokens_used(self) -> int:
-        return self._tokens
-
-    def complete(self, *, model: str, system: str, prompt: str) -> str:
-        self._tokens += len(prompt) // 4  # rough token accounting for the demo
-        text = prompt.lower()
-
-        # --- critic role: judge a finding, return an updated confidence ---
-        if "you are the critic" in system.lower():
-            # Kill findings with no concrete evidence; keep the rest.
-            weak = "evidence: none" in text or "no evidence" in text
-            return json.dumps(
-                {
-                    "confidence": 0.2 if weak else 0.82,
-                    "note": (
-                        "No concrete line or tool result cited; downgraded."
-                        if weak
-                        else "Backed by a cited line and tool output; upheld."
-                    ),
-                }
-            )
-
-        # --- specialist role: propose findings for the diff ---
-        findings: list[dict] = []
-        if "security" in system.lower():
-            if "eval(" in text or "subprocess" in text or "os.system" in text:
-                findings.append(
-                    {
-                        "title": "Possible command/eval injection",
-                        "body": "Untrusted input reaches a dynamic execution sink.",
-                        "severity": "high",
-                        "confidence": 0.7,
-                        "evidence": ["grep matched a dynamic-execution call in the diff"],
-                    }
-                )
-        if "correctness" in system.lower():
-            if "except:" in text or "except exception" in text:
-                findings.append(
-                    {
-                        "title": "Overly broad exception handler",
-                        "body": "Bare/broad except swallows errors and hides bugs.",
-                        "severity": "medium",
-                        "confidence": 0.65,
-                        "evidence": ["diff adds a broad except clause"],
-                    }
-                )
-        if "test" in system.lower():
-            if "def " in text and "test_" not in text:
-                findings.append(
-                    {
-                        "title": "New logic added without tests",
-                        "body": "Changed function has no accompanying test in the diff.",
-                        "severity": "low",
-                        "confidence": 0.55,
-                        "evidence": ["no test_* additions found for the changed symbol"],
-                    }
-                )
-        return json.dumps({"findings": findings})
+    def cost_usd(self) -> float: ...
 
 
 class LiteLLMClient:
@@ -97,26 +60,116 @@ class LiteLLMClient:
 
     def __init__(self) -> None:
         self._tokens = 0
+        self._cost = 0.0
+        self._lock = threading.Lock()
+        self._last = threading.local()
 
     @property
     def tokens_used(self) -> int:
         return self._tokens
 
-    def complete(self, *, model: str, system: str, prompt: str) -> str:
-        import litellm  # imported lazily so mock runs need no dependency
+    @property
+    def cost_usd(self) -> float:
+        return self._cost
 
-        resp = litellm.completion(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-        )
+    @property
+    def last_call_tokens(self) -> int:
+        """Tokens of this thread's most recent call (exact under concurrency)."""
+        return int(getattr(self._last, "tokens", 0))
+
+    def complete(self, *, model: str, system: str, prompt: str) -> str:
+        import litellm  # imported lazily so mock runs need no provider setup
+
+        try:
+            resp = litellm.completion(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                # No temperature: current Claude models reject non-default
+                # sampling params; determinism comes from the critic, not sampling.
+                num_retries=2,
+            )
+        except Exception as exc:  # provider SDKs raise many unrelated types
+            raise LLMError(f"{model}: {exc}") from exc
         usage = getattr(resp, "usage", None)
-        if usage is not None:
-            self._tokens += getattr(usage, "total_tokens", 0)
-        return resp.choices[0].message.content or ""
+        tokens = int(getattr(usage, "total_tokens", 0) or 0) if usage is not None else 0
+        cost = 0.0
+        # Unknown model pricing raises; tokens are still tracked.
+        with contextlib.suppress(Exception):
+            cost = float(litellm.completion_cost(completion_response=resp) or 0.0)
+        with self._lock:  # calls arrive from several threads
+            self._tokens += tokens
+            self._cost += cost
+        self._last.tokens = tokens
+        content = resp.choices[0].message.content
+        if not content:
+            raise LLMError(f"{model}: empty response")
+        return str(content)
+
+
+class BudgetExceeded(LLMError):
+    """The review hit its token or dollar budget; no further calls are made."""
+
+
+class BudgetedClient:
+    """Wraps any client and refuses calls once a budget is spent.
+
+    The check happens before each call, so concurrent calls can overshoot by
+    at most one call each: a soft cap that never runs away.
+    """
+
+    def __init__(self, inner: LLMClient, token_budget: int, max_cost_usd: float = 0.0) -> None:
+        self.inner = inner
+        self.token_budget = token_budget
+        self.max_cost_usd = max_cost_usd
+        self.exhausted = False
+        self._lock = threading.Lock()
+
+    @property
+    def tokens_used(self) -> int:
+        return self.inner.tokens_used
+
+    @property
+    def cost_usd(self) -> float:
+        return self.inner.cost_usd
+
+    def complete(self, *, model: str, system: str, prompt: str) -> str:
+        with self._lock:
+            over_tokens = self.token_budget > 0 and self.inner.tokens_used >= self.token_budget
+            over_cost = self.max_cost_usd > 0 and self.inner.cost_usd >= self.max_cost_usd
+            if over_tokens or over_cost:
+                self.exhausted = True
+            if self.exhausted:
+                raise BudgetExceeded(
+                    f"budget spent: {self.inner.tokens_used} tokens, ${self.inner.cost_usd:.4f}"
+                )
+        return self.inner.complete(model=model, system=system, prompt=prompt)
+
+    @property
+    def last_call_tokens(self) -> int | None:
+        return getattr(self.inner, "last_call_tokens", None)
 
 
 def make_client(mode: str) -> LLMClient:
-    return LiteLLMClient() if mode == "live" else MockLLMClient()
+    if mode == "live":
+        return LiteLLMClient()
+    if mode == "mock":
+        return MockLLMClient()
+    raise ValueError(f"unknown llm_mode {mode!r} (expected 'mock' or 'live')")
+
+
+# Re-exported so `from scrutai.llm import MockLLMClient` keeps working.
+from .mock import MockLLMClient  # noqa: E402
+
+__all__ = [
+    "BudgetExceeded",
+    "BudgetedClient",
+    "LLMClient",
+    "LLMError",
+    "LiteLLMClient",
+    "MockLLMClient",
+    "extract_json",
+    "make_client",
+]

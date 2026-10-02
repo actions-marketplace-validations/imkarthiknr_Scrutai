@@ -31,4 +31,4 @@ def test_eval_harness_reports_precision() -> None:
 
     metrics = run_benchmark("benchmark/cases.jsonl", ScrutaiConfig())
     assert 0.0 <= metrics["precision"] <= 1.0
-    assert metrics["cases"] == 4
+    assert metrics["cases"] >= 30

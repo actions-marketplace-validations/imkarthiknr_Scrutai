@@ -1,0 +1,30 @@
+# Copy to .github/workflows/scrutai.yml in the repository you want reviewed.
+name: scrutai
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write     # summary + inline comments
+  security-events: write   # SARIF upload (optional)
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}   # tools read the PR's code
+      - id: scrutai
+        uses: imkarthiknr/Scrutai@main
+        with:
+          llm-mode: live
+          install-semgrep: "true"
+          sarif-file: scrutai.sarif
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # or any LiteLLM provider key
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('scrutai.sarif') != ''
+        with:
+          sarif_file: scrutai.sarif

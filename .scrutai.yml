@@ -1,14 +1,21 @@
 # Scrutai configuration. All values shown are defaults — delete any you don't override.
-enabled_agents: [security, correctness, tests]
+enabled_agents: [security, correctness, tests, performance, style]
 min_severity: low
 min_confidence: 0.6
 max_critic_rounds: 2
-token_budget: 200000
+token_budget: 200000   # hard cap per review; 0 disables
+max_cost_usd: 0.0      # optional dollar cap (live mode); 0 disables
+concurrency: 4         # parallel critic/defense calls
 fail_on: high
 llm_mode: mock        # switch to "live" and export a provider key to run for real
+routing: heuristic    # or "llm": the router model may narrow the selection further
+max_agent_steps: 4    # ReAct budget per specialist (tool calls + final answer)
+semgrep: auto         # auto | off | required
+semgrep_config: bundled   # or any semgrep --config value, e.g. p/default
+tracing: none         # none | otel | langfuse  (and: scrutai review --trace run.jsonl)
 include: ["**/*"]
 exclude: ["**/vendor/**", "**/*.lock", "**/dist/**"]
-models:
-  router: gpt-4o-mini
-  specialist: gpt-4o-mini
-  critic: claude-3-5-sonnet-latest
+models:                 # any LiteLLM model string; cheap router, strong critic
+  router: anthropic/claude-haiku-4-5
+  specialist: anthropic/claude-sonnet-5-5
+  critic: anthropic/claude-opus-5-5

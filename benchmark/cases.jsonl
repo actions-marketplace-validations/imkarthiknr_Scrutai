@@ -1,4 +1,50 @@
-{"id": "inj-01", "file": "runner.py", "patch": "+def run(cmd):\n+    import os\n+    return os.system(cmd)\n", "labels": ["injection"]}
-{"id": "exc-01", "file": "svc.py", "patch": "+def load(x):\n+    try:\n+        return parse(x)\n+    except Exception:\n+        return None\n", "labels": ["broad_except"]}
+{"id": "inj-01", "file": "runner.py", "patch": "+import os\n+\n+def run(cmd):\n+    return os.system(cmd)\n", "labels": ["injection"], "repo": {"tests/test_runner.py": "from runner import run\n\n\ndef test_run():\n    assert run is not None\n"}, "note": "shell sink with caller-controlled input"}
+{"id": "inj-02", "file": "media.py", "patch": "+import subprocess\n+\n+def _convert(path):\n+    subprocess.run(f\"convert {path} out.png\", shell=True)\n", "labels": ["injection"], "note": "shell=True with an f-string"}
+{"id": "inj-03", "file": "calc_api.py", "patch": "+result = eval(request.args[\"expr\"])\n", "labels": ["injection"]}
+{"id": "trap-inj-comment", "file": "runner.py", "patch": "+# never use os.system(cmd) here; argv lists only\n+subprocess.run([\"ls\", path])\n", "labels": [], "note": "sink only mentioned in a comment; list-form subprocess is safe"}
+{"id": "trap-inj-constant", "file": "term.py", "patch": "+os.system(\"clear\")\n", "labels": [], "note": "constant command"}
+{"id": "trap-inj-string", "file": "audit.py", "patch": "+log.warning(\"refusing to eval(user_input)\")\n", "labels": [], "note": "sink inside a log string"}
+{"id": "trap-inj-literal-eval", "file": "parse.py", "patch": "+value = ast.literal_eval(raw)\n", "labels": [], "note": "literal_eval is safe"}
+{"id": "sqli-01", "file": "users.py", "patch": "+cur.execute(f\"SELECT * FROM users WHERE id = {uid}\")\n", "labels": ["sql_injection"]}
+{"id": "sqli-02", "file": "users.py", "patch": "+cur.execute(\"SELECT * FROM t WHERE name = '%s'\" % name)\n", "labels": ["sql_injection"]}
+{"id": "trap-sqli-param", "file": "users.py", "patch": "+cur.execute(\"SELECT * FROM t WHERE id = %s\", (uid,))\n", "labels": [], "note": "bound parameter"}
+{"id": "miss-sqli-indirect", "file": "users.py", "patch": "+query = \"SELECT * FROM t WHERE name = '\" + name + \"'\"\n+cur.execute(query)\n", "labels": ["sql_injection"], "note": "query built on a previous line: needs data-flow, expected miss for the mock"}
+{"id": "secret-01", "file": "billing.py", "patch": "+STRIPE_API_KEY = \"sk_live_51H8xKfJ2bQ9zT\"\n", "labels": ["hardcoded_secret"]}
+{"id": "secret-02", "file": "db.py", "patch": "+conn = connect(host=\"db\", password=\"Pr0d-Db!2024\")\n", "labels": ["hardcoded_secret"]}
+{"id": "trap-secret-placeholder", "file": "settings.py", "patch": "+API_KEY = \"your-api-key-here\"\n", "labels": [], "note": "placeholder"}
+{"id": "trap-secret-env", "file": "settings.py", "patch": "+API_KEY = os.environ[\"API_KEY\"]\n", "labels": [], "note": "read from the environment"}
+{"id": "trap-secret-test-fixture", "file": "tests/test_auth.py", "patch": "+TOKEN = \"abc123xyz789\"\n", "labels": [], "note": "fixture in test code"}
+{"id": "deser-01", "file": "cache.py", "patch": "+data = pickle.loads(request.body)\n", "labels": ["unsafe_deserialization"]}
+{"id": "deser-02", "file": "cfg.py", "patch": "+cfg = yaml.load(open(path))\n", "labels": ["unsafe_deserialization"]}
+{"id": "trap-deser-safe", "file": "cfg.py", "patch": "+cfg = yaml.safe_load(open(path))\n+other = yaml.load(fh, Loader=yaml.SafeLoader)\n", "labels": []}
+{"id": "crypto-01", "file": "auth.py", "patch": "+digest = hashlib.md5(password.encode()).hexdigest()\n", "labels": ["weak_crypto"]}
+{"id": "trap-crypto-nonsecurity", "file": "etag.py", "patch": "+etag = hashlib.md5(body, usedforsecurity=False).hexdigest()\n", "labels": []}
+{"id": "tls-01", "file": "client.py", "patch": "+resp = requests.get(url, verify=False)\n", "labels": ["tls_verify_disabled"]}
+{"id": "miss-path-traversal", "file": "files.py", "patch": "+fh = open(os.path.join(UPLOAD_DIR, request.args[\"name\"]))\n", "labels": ["path_traversal"], "note": "no rule for this in the mock: expected miss"}
+{"id": "exc-01", "file": "svc.py", "patch": "+def load(x):\n+    try:\n+        return parse(x)\n+    except Exception:\n+        return None\n", "labels": ["broad_except"], "repo": {"tests/test_svc.py": "from svc import load\n\n\ndef test_load():\n    assert load is not None\n"}}
+{"id": "exc-02", "file": "svc.py", "patch": "+def _load(x):\n+    try:\n+        return parse(x)\n+    except:\n+        pass\n", "labels": ["broad_except"]}
+{"id": "trap-exc-specific", "file": "svc.py", "patch": "+def _load(x):\n+    try:\n+        return int(x)\n+    except ValueError:\n+        return 0\n", "labels": []}
+{"id": "mut-01", "file": "cart.py", "patch": "+def add_item(item, bucket=[]):\n+    bucket.append(item)\n+    return bucket\n", "labels": ["mutable_default", "missing_tests"], "note": "two independent issues in one function"}
+{"id": "trap-mut-none", "file": "cart.py", "patch": "+def add_item(item, bucket=None):\n+    bucket = [] if bucket is None else bucket\n+    bucket.append(item)\n+    return bucket\n", "labels": [], "repo": {"tests/test_cart.py": "from cart import add_item\n\n\ndef test_add_item():\n    assert add_item is not None\n"}}
+{"id": "none-01", "file": "users.py", "patch": "+if user == None:\n+    raise LookupError(uid)\n", "labels": ["none_comparison"]}
+{"id": "trap-none-is", "file": "users.py", "patch": "+if user is None:\n+    raise LookupError(uid)\n", "labels": []}
+{"id": "ident-01", "file": "orders.py", "patch": "+if status is \"active\":\n+    ship(order)\n", "labels": ["identity_literal"]}
+{"id": "miss-off-by-one", "file": "stats.py", "patch": "+def _total(xs):\n+    t = 0\n+    for i in range(len(xs) + 1):\n+        t += xs[i]\n+    return t\n", "labels": ["logic_error"], "note": "needs real reasoning: expected miss for the mock"}
 {"id": "test-01", "file": "calc.py", "patch": "+def discount(price, pct):\n+    return price * (1 - pct)\n", "labels": ["missing_tests"]}
+{"id": "trap-test-exists", "file": "calc.py", "patch": "+def discount(price, pct):\n+    return price * (1 - pct)\n", "labels": [], "repo": {"tests/test_calc.py": "from calc import discount\n\n\ndef test_discount():\n    assert discount is not None\n"}, "note": "already covered by an existing test in the repo"}
+{"id": "trap-test-private", "file": "calc.py", "patch": "+def _round2(x):\n+    return round(x, 2)\n", "labels": [], "note": "private helper"}
+{"id": "perf-n1-sql", "file": "report.py", "patch": "+def _names(cur, user_ids):\n+    out = []\n+    for uid in user_ids:\n+        out.append(cur.execute(\"SELECT name FROM users WHERE id = ?\", (uid,)).fetchone())\n+    return out\n", "labels": ["n_plus_one"], "note": "one query per id"}
+{"id": "perf-n1-http", "file": "sync.py", "patch": "+def _pull(urls):\n+    for url in urls:\n+        resp = requests.get(url, timeout=5)\n+        yield resp.json()\n", "labels": ["n_plus_one"]}
+{"id": "trap-perf-hoisted-query", "file": "report.py", "patch": "+def _names(cur):\n+    rows = cur.execute(\"SELECT name FROM users\").fetchall()\n+    names = []\n+    for row in rows:\n+        names.append(row[0])\n+    return names\n", "labels": [], "note": "query hoisted out of the loop"}
+{"id": "perf-regex", "file": "logs.py", "patch": "+def _count(lines):\n+    n = 0\n+    for line in lines:\n+        if re.compile(r\"ERROR \\d+\").match(line):\n+            n += 1\n+    return n\n", "labels": ["regex_in_loop"]}
+{"id": "trap-perf-regex-hoisted", "file": "logs.py", "patch": "+_ERR = re.compile(r\"ERROR \\d+\")\n+\n+def _count(lines):\n+    return sum(1 for line in lines if _ERR.match(line))\n", "labels": []}
+{"id": "perf-concat", "file": "csvout.py", "patch": "+def _row(parts):\n+    out = \"\"\n+    for part in parts:\n+        out += f\"{part},\"\n+    return out\n", "labels": ["string_concat_in_loop"]}
+{"id": "trap-perf-concat-in-string", "file": "csvout.py", "patch": "+def _row(parts):\n+    for part in parts:\n+        log.debug(\"out += 'x' is quadratic\")\n", "labels": [], "note": "pattern only inside a log message"}
+{"id": "perf-sort", "file": "leader.py", "patch": "+best = sorted(scores)[-1]\n", "labels": ["sort_for_min_max"]}
+{"id": "style-print", "file": "lib/pricing.py", "patch": "+total = base * (1 + tax)\n+print(f\"debug total={total}\")\n", "labels": ["debug_leftover"]}
+{"id": "style-breakpoint", "file": "lib/pricing.py", "patch": "+total = base * (1 + tax)\n+breakpoint()\n", "labels": ["debug_leftover"]}
+{"id": "trap-style-cli-print", "file": "cli.py", "patch": "+print(\"Done.\")\n", "labels": [], "note": "printing is a CLI's job"}
+{"id": "style-wildcard", "file": "geo.py", "patch": "+from math import *\n", "labels": ["wildcard_import"]}
 {"id": "clean-01", "file": "readme.py", "patch": "+# Updated the module docstring for clarity.\n+\"\"\"Utility helpers.\"\"\"\n", "labels": []}
+{"id": "clean-02", "file": "calc.py", "patch": "+def _area(w, h):\n+    width, height = w, h\n+    return width * height\n", "labels": []}
+{"id": "clean-docs-only", "file": "docs/guide.md", "patch": "+## Install\n+Run `pip install scrutai`, then never `eval(input())`.\n", "labels": [], "note": "docs-only change: router wakes nobody"}

@@ -3,43 +3,117 @@
 These are the "grounded in the real repo, not just the diff" part of Scrutai:
 plain, deterministic functions over the working tree and git history. They need
 no LLM and are unit-testable on their own.
+
+Arguments to these functions can come from a model, so every path is confined
+to the repo root (a model must not be able to read `../../.ssh/id_rsa` and ship
+it to a provider) and every pattern is passed as data, never as a flag.
 """
 
 from __future__ import annotations
 
+import fnmatch
+import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
+
+_MAX_GREP_HITS = 50
 
 
 def _run(args: list[str], cwd: str = ".") -> str:
     try:
-        out = subprocess.run(
-            args, cwd=cwd, capture_output=True, text=True, timeout=30, check=False
-        )
+        out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=30, check=False)
         return out.stdout
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, FileNotFoundError, NotADirectoryError):
         return ""
 
 
-def read_file(path: str, repo_root: str = ".") -> str:
-    """Return the full text of a file in the repo (empty string if missing)."""
-    p = Path(repo_root) / path
-    return p.read_text(errors="replace") if p.is_file() else ""
+def _confine(path: str, repo_root: str) -> Path | None:
+    """Resolve `path` inside `repo_root`, or None if it escapes it."""
+    root = Path(repo_root).resolve()
+    target = (root / path).resolve()
+    return target if target.is_relative_to(root) else None
 
 
-def grep(pattern: str, repo_root: str = ".") -> list[str]:
-    """Search the repo. Prefers ripgrep, falls back to git grep."""
-    out = _run(["rg", "-n", "--no-heading", pattern, "."], cwd=repo_root)
-    if not out:
-        out = _run(["git", "grep", "-n", pattern], cwd=repo_root)
-    return [line for line in out.splitlines() if line.strip()]
+def read_file(
+    path: str, repo_root: str = ".", start: int | None = None, end: int | None = None
+) -> str:
+    """Return a file's text (optionally lines start..end, 1-based inclusive).
+
+    Empty string if the file is missing or outside the repo.
+    """
+    p = _confine(path, repo_root)
+    if p is None or not p.is_file():
+        return ""
+    text = p.read_text(errors="replace")
+    if start is None and end is None:
+        return text
+    lines = text.splitlines()
+    lo = max((start or 1) - 1, 0)
+    hi = min(end or len(lines), len(lines))
+    return "\n".join(f"{i + 1}: {lines[i]}" for i in range(lo, hi))
+
+
+def grep(pattern: str, repo_root: str = ".", regex: bool = False, glob: str = "") -> list[str]:
+    """Search the repo; returns `path:line:text` hits. Prefers ripgrep, falls back to git grep.
+
+    Fixed-string by default so model-supplied text like `eval(` is not a broken regex.
+    `glob` restricts the search to matching paths (e.g. `*test*`).
+    """
+    if shutil.which("rg"):
+        mode = [] if regex else ["-F"]
+        rg_glob = ["-g", glob] if glob else []
+        out = _run(["rg", "-n", "--no-heading", *mode, *rg_glob, "-e", pattern, "."], cwd=repo_root)
+    elif _run(["git", "rev-parse", "--is-inside-work-tree"], cwd=repo_root).strip() == "true":
+        git_mode = ["-E"] if regex else ["-F"]
+        spec = ["--", f":(glob)**/{glob}"] if glob else []
+        out = _run(["git", "grep", "-n", *git_mode, "-e", pattern, *spec], cwd=repo_root)
+    else:
+        # No ripgrep and not a git repo (a bare checkout, a patch reviewed in a
+        # scratch directory): search in Python so tools never silently go blind.
+        return _py_grep(pattern, repo_root, regex, glob)
+    hits = [line.removeprefix("./") for line in out.splitlines() if line.strip()]
+    return hits[:_MAX_GREP_HITS]
+
+
+_SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
+_MAX_FILE_BYTES = 1_000_000
+
+
+def _py_grep(pattern: str, repo_root: str, regex: bool, glob: str) -> list[str]:
+    try:
+        rx = re.compile(pattern if regex else re.escape(pattern))
+    except re.error:
+        return []
+    root = Path(repo_root)
+    hits: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        for name in sorted(filenames):
+            if glob and not fnmatch.fnmatch(name, glob):
+                continue
+            path = Path(dirpath) / name
+            try:
+                if path.stat().st_size > _MAX_FILE_BYTES:
+                    continue
+                text = path.read_text(errors="strict")
+            except (OSError, UnicodeDecodeError):  # unreadable or binary
+                continue
+            rel = path.relative_to(root).as_posix()
+            for n, line in enumerate(text.splitlines(), 1):
+                if rx.search(line):
+                    hits.append(f"{rel}:{n}:{line}")
+                    if len(hits) >= _MAX_GREP_HITS:
+                        return hits
+    return hits
 
 
 def git_blame(path: str, line: int, repo_root: str = ".") -> str:
     """Blame a single line so an agent can see who/when introduced context."""
-    out = _run(
-        ["git", "blame", "-L", f"{line},{line}", "--", path], cwd=repo_root
-    )
+    if _confine(path, repo_root) is None or line < 1:
+        return ""
+    out = _run(["git", "blame", "-L", f"{line},{line}", "--", path], cwd=repo_root)
     return out.strip()
 
 

@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v3
+      - name: Install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+          uv run --no-sync playwright install --with-deps chromium
+      - name: Lint
+        run: |
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check .
+      - name: Typecheck
+        run: uv run --no-sync mypy src
+      - name: Test (incl. browser end-to-end)
+        run: uv run --no-sync pytest -q
+      - name: Benchmark gate (mock pipeline)
+        run: uv run --no-sync scrutai eval --min-precision 0.95 --min-recall 0.8 --report eval-report.md
+      - name: Publish benchmark report
+        if: always()
+        run: test -f eval-report.md && cat eval-report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build and check the committed bundle is up to date
+        run: |
+          npm run build
+          git diff --exit-code -- ../src/scrutai/web/static \
+            || { echo "::error::Rebuild the UI (cd web && npm run build) and commit src/scrutai/web/static"; exit 1; }
