@@ -83,7 +83,24 @@ scrutai review --demo   # should report "5 issue(s) upheld" and exit with code 1
 pytest -q               # should report 200+ passed
 ```
 
-You never need an API key to develop. Everything runs against the offline mock model.
+You never need an API key to develop. Everything, including the whole test suite and CI, runs
+against the offline mock model, so no contributor or CI run spends money or needs a secret.
+
+**Optional: trying a change against a real model.** Use your own provider key (see the README's
+[Running with a real model](README.md#running-with-a-real-model-bring-your-own-key) for providers
+and variable names):
+
+```bash
+export ANTHROPIC_API_KEY=...                   # your key, in your shell only
+scrutai review --demo --config my-live.yml     # a copy of .scrutai.yml with llm_mode: live
+```
+
+- Keep live configs and keys out of commits: put keys only in the environment, and set a
+  `max_cost_usd` cap in live configs.
+- Never add a test that needs a real key. Use `MockLLMClient`, a scripted client, or LiteLLM's
+  `mock_response` (see the [testing guide](#testing-guide)).
+- When a PR changes prompts or the critic, say in its description whether you checked it live,
+  with which model.
 
 ## Running the checks
 

@@ -44,7 +44,7 @@
   - [Ask for it from your AI assistant: the MCP server](#ask-for-it-from-your-ai-assistant-the-mcp-server)
   - [Measure it: the benchmark](#measure-it-the-benchmark)
   - [Use it as a library](#use-it-as-a-library)
-- [Running with a real model](#running-with-a-real-model)
+- [Running with a real model (bring your own key)](#running-with-a-real-model-bring-your-own-key)
 - [How it works](#how-it-works)
 - [Configuration reference](#configuration-reference)
 - [Benchmark](#benchmark)
@@ -146,9 +146,16 @@ critic's challenge, the specialist's defense and the final ruling.
 
 ## Installation
 
-**Requirements:** Python 3.12+, `git`. Optional: [ripgrep](https://github.com/BurntSushi/ripgrep)
-(faster search; Scrutai falls back to `git grep` or pure Python), [Semgrep](https://semgrep.dev)
-(SAST evidence). Node.js is only needed to *develop* the web UI, not to run it.
+**Requirements**
+
+| | Needed for | Notes |
+|---|---|---|
+| Python 3.12+ and `git` | everything | |
+| **Your own model API key** | real reviews only (`llm_mode: live`) | Mock mode (the default) needs no key and sends nothing anywhere. Scrutai ships no credentials: you use your own provider account, and calls are billed to it. See [Running with a real model](#running-with-a-real-model-bring-your-own-key). |
+| [ripgrep](https://github.com/BurntSushi/ripgrep) | optional | Faster search; Scrutai falls back to `git grep` or pure Python. |
+| [Semgrep](https://semgrep.dev) | optional | SAST evidence for the security agent (`pip install "scrutai[semgrep]"`). |
+| `GITHUB_TOKEN` | optional | Only for `review --pr` and posting PR comments. |
+| Node.js | developing the web UI only | The built UI ships inside the package. |
 
 Scrutai is on [PyPI](https://pypi.org/project/scrutai/):
 
@@ -361,10 +368,14 @@ for f in result.findings:
 `ReviewResult` is a Pydantic model: `verdict`, `findings`, `dropped`, `summary`, `tokens_used`,
 `cost_usd`, `rounds`, `agents`, `budget_exhausted`, `cancelled`.
 
-## Running with a real model
+## Running with a real model (bring your own key)
 
-Switch `llm_mode` to `live` and provide a key for any provider
-[LiteLLM supports](https://docs.litellm.ai/docs/providers):
+Scrutai contains no API keys and has no server of its own. In live mode, model calls go **from
+your machine, with your key, straight to the provider you choose**, and are billed to your
+account. Scrutai reaches models through [LiteLLM](https://docs.litellm.ai/docs/providers), which
+supports 100+ providers and reads each provider's standard environment variable.
+
+**1. Pick models** (one per role; they may be from different providers):
 
 ```yaml
 # .scrutai.yml
@@ -375,13 +386,40 @@ models:
   critic: anthropic/claude-opus-5-5        # strongest: its judgement is the product
 ```
 
+**2. Give it your key** through the environment, never in `.scrutai.yml` or any committed file:
+
 ```bash
-export ANTHROPIC_API_KEY=...
+export ANTHROPIC_API_KEY=sk-ant-...            # macOS / Linux
+$env:ANTHROPIC_API_KEY = "sk-ant-..."          # Windows PowerShell
+set ANTHROPIC_API_KEY=sk-ant-...               # Windows Command Prompt
+
 scrutai review --base main
 ```
 
-Any LiteLLM model string works (OpenAI, Gemini, Bedrock, Vertex, local models, and so on), and each
-role can use a different provider.
+**Common providers**
+
+| Provider | Model string (example) | Environment variable(s) |
+|---|---|---|
+| Anthropic (Claude), the default | `anthropic/claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
+| Google Gemini | `gemini/gemini-2.5-pro` | `GEMINI_API_KEY` |
+| OpenAI | `openai/gpt-4o` | `OPENAI_API_KEY` |
+| Azure OpenAI | `azure/<your-deployment>` | `AZURE_API_KEY`, `AZURE_API_BASE`, `AZURE_API_VERSION` |
+| AWS Bedrock | `bedrock/<model-id>` | your usual AWS credentials (`AWS_ACCESS_KEY_ID`, … or a profile) |
+| Google Vertex AI | `vertex_ai/<model>` | Google Cloud application-default credentials |
+| Ollama (local, free) | `ollama/llama3.1` | none; start `ollama serve` first |
+
+Any other [LiteLLM model string](https://docs.litellm.ai/docs/providers) works the same way. If
+you switch to `llm_mode: live` without changing `models`, the Claude defaults apply, so you need
+`ANTHROPIC_API_KEY`. A missing or wrong key fails with the provider's authentication error.
+
+**Where the key goes, per way of running Scrutai**
+
+| You run | Put the key in |
+|---|---|
+| `scrutai review` / `eval` / `serve` | your shell environment (above) |
+| The GitHub Action | a repository secret in *your* repo, passed as `env:` (see the [workflow](#use-it-on-every-pull-request)) |
+| `scrutai mcp` | the environment of the process running the server (e.g. the `env` block of a Claude Desktop or Cursor config); the MCP client never sees it |
+| The Python library | the environment of your program |
 
 **Keeping costs under control:**
 
@@ -390,6 +428,10 @@ role can use a different provider.
   the critic had not judged.
 - Routing skips specialists a change can't need, and chunking keeps prompts small.
 - Every result reports `tokens_used` and `cost_usd`; `--trace` breaks both down per call.
+- Dollar figures come from LiteLLM's price list. For models it has no price for (for example local
+  Ollama models), `cost_usd` reads `0` and only `token_budget` limits a review.
+- Benchmark numbers in this README are from mock mode. Review quality with a real model depends on
+  the model: smaller or local models produce more raw noise, which the critic has to filter.
 
 ## How it works
 
@@ -516,6 +558,8 @@ product:
 - **Git refs are validated**, so a ref such as `--output=...` can never be read as a git option.
 - **Nothing unjudged ships.** A provider error, an unparseable reply or a spent budget withholds
   the finding instead of passing it through.
+- **Your keys stay yours.** Scrutai reads provider keys only from the environment, never from
+  config files, never logs them, and sends them only to that provider (via LiteLLM).
 - **No telemetry.** Scrutai sends nothing anywhere except to the model provider you configure.
   CrewAI's telemetry is disabled when the CrewAI backend is used.
 - **The theater binds to localhost** and warns if you bind it anywhere else.
@@ -564,6 +608,13 @@ Scrutai/
 
 **Does it need an API key?**
 No. Mock mode (the default) runs everything offline. You need a key only for `llm_mode: live`.
+
+**Whose API key does it use, and who pays?**
+Yours. Scrutai ships no credentials and runs no service. It calls the provider you configure,
+directly from your machine or CI, with the key in your environment, so usage is billed to your
+provider account. Use `token_budget` and `max_cost_usd` to cap each review, or a local model
+(Ollama) to pay nothing. See
+[Running with a real model](#running-with-a-real-model-bring-your-own-key).
 
 **Which languages can it review?**
 The pipeline is language-agnostic: diffs, routing, tools and the critic work on any text. The mock

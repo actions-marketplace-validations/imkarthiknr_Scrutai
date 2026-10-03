@@ -127,6 +127,13 @@ pull request. The engine is the same one the CLI, the Action and the web UI use.
   captured from real runs by `scripts/capture_media.py`. Its links are absolute, so they also
   work on the PyPI project page.
 - `examples/mcp/try_it.py`: a scripted MCP client to try `scrutai mcp` without an AI client.
+- Bring-your-own-key, documented:
+  - the README's requirements table;
+  - "Running with a real model" with each provider's model string and environment variable,
+    including Windows syntax;
+  - where the key goes for the CLI, Action, MCP server and library;
+  - a "who pays" FAQ entry.
+  DEVELOPMENT.md covers optional live testing for contributors.
 - A full README rewrite, `DEVELOPMENT.md` (the contributor guide) and this `RELEASES.md`, which
   replaces `CHANGELOG.md`. DEVELOPMENT.md gains an "Add an MCP tool" recipe.
 

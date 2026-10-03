@@ -33,8 +33,11 @@ Scrutai works with MCP Python SDK **1.28+ and 2.x**. The `crewai` extra pins the
 if you install both, you get 1.28, which is fully supported.
 
 Reviews use your `.scrutai.yml` (or `--config FILE`). The default is **mock mode**: the whole
-pipeline runs offline, with no API key. Set `llm_mode: live` (and e.g. `ANTHROPIC_API_KEY`) for
-real reviews.
+pipeline runs offline, with no API key. Set `llm_mode: live` for real reviews. Then the server
+needs **your own** provider key in its environment: e.g. `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`
+or `OPENAI_API_KEY`, matching the `models` in your config (see
+[providers and keys](../README.md#running-with-a-real-model-bring-your-own-key)). For desktop
+clients, put it in the server's `env` block. The MCP client itself never sees the key.
 
 To check that the server works before wiring up a client, run the scripted client:
 
