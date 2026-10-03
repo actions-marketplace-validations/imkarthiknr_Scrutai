@@ -6,7 +6,8 @@ behaviour; such changes are listed under **Changed**, with upgrade notes.
 
 | Version | Date | Theme | Status |
 |---|---|---|---|
-| [0.4.0](#040) | 2026-10-03 | Ask for a review from any AI assistant | **Current** |
+| [0.4.1](#041) | 2026-10-03 | Works on Windows | **Current** |
+| [0.4.0](#040) | 2026-10-03 | Ask for a review from any AI assistant | Superseded |
 | [0.3.0](#030) | 2026-10-02 | See it work, swap the framework | Superseded |
 | [0.2.0](#020) | 2026-10-01 | Ready for real pull requests | Superseded |
 | [0.1.0](#010) | 2026-10-01 | The reviewing engine | Superseded |
@@ -51,6 +52,30 @@ Install a released version from [PyPI](https://pypi.org/project/scrutai/) (`pip 
 ## Unreleased
 
 Changes on `main` that are not in a tagged version yet. Nothing yet.
+
+---
+
+## 0.4.1
+
+**Released 2026-10-03 · "Works on Windows"**
+
+### Fixed
+- **Reviews crashed on Windows** when a diff contained any non-ASCII character, such as a curly
+  quote or an emoji (`UnicodeDecodeError: 'charmap' codec can't decode byte …`, then
+  `AttributeError: 'NoneType' object has no attribute 'splitlines'`). Python on Windows decodes
+  program output and files with the legacy code page (cp1252) unless told otherwise. Every git and
+  Semgrep subprocess, and every file read or write (configs, patches, reports, traces, benchmark
+  cases), now uses UTF-8 explicitly.
+- Writing a Markdown report with severity emoji (`-f markdown -o …`) no longer depends on the
+  console's code page.
+
+### Added
+- A test that scans the source for any text I/O without an explicit encoding, and an end-to-end
+  test that reviews a commit containing a curly quote and an emoji in a non-UTF-8 locale.
+
+### Upgrade notes
+- `pip install -U scrutai`. If you worked around the crash with `set PYTHONUTF8=1`, you no longer
+  need it.
 
 ---
 

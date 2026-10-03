@@ -43,6 +43,8 @@ def diff_from_git(base: str, head: str, repo_root: str = ".") -> DiffContext:
             cwd=repo_root,
             capture_output=True,
             text=True,
+            encoding="utf-8",  # not the locale code page (cp1252 on Windows)
+            errors="replace",
             check=False,
         )
     except (FileNotFoundError, NotADirectoryError) as exc:  # git missing / bad cwd
@@ -61,7 +63,7 @@ def diff_from_file(path: str, repo_root: str = ".") -> DiffContext:
         p = Path(path)
         if not p.is_file():
             raise DiffError(f"no such diff file: {path}")
-        text = p.read_text(errors="replace")
+        text = p.read_text(encoding="utf-8", errors="replace")
     return parse_diff(text, repo_root=repo_root)
 
 

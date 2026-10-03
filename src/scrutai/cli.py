@@ -82,7 +82,7 @@ def _emit(result: ReviewResult, fmt: Format, output: str | None, show_dropped: b
     else:  # markdown (also what --output gets when the format is "table")
         text = to_markdown(result, show_dropped)
     if output:
-        Path(output).write_text(text + ("" if text.endswith("\n") else "\n"))
+        Path(output).write_text(text + ("" if text.endswith("\n") else "\n"), encoding="utf-8")
         console.print(f"[dim]Wrote {fmt.value} report to {output}[/dim]")
     else:
         typer.echo(text)
@@ -199,7 +199,7 @@ def serve(
     store = RunStore()
     if replay:
         try:
-            events = load_trace(Path(replay).read_text())
+            events = load_trace(Path(replay).read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             console.print(f"[red]Cannot replay {replay}:[/red] {exc}")
             raise typer.Exit(code=2) from exc
@@ -319,7 +319,7 @@ def eval_cmd(
             raise typer.Exit(code=2) from exc
         md = compare_markdown(comparison)
         if report:
-            Path(report).write_text(md)
+            Path(report).write_text(md, encoding="utf-8")
         if output_json:
             typer.echo(json.dumps(comparison, indent=2))
         else:
@@ -342,7 +342,7 @@ def eval_cmd(
 
     md = markdown_report(metrics, details)
     if report:
-        Path(report).write_text(md)
+        Path(report).write_text(md, encoding="utf-8")
     if output_json:
         typer.echo(json.dumps(metrics, indent=2))
     else:

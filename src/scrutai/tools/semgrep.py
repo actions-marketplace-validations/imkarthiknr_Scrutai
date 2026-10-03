@@ -123,6 +123,8 @@ def scan(paths: list[str], repo_root: str = ".", config: str = BUNDLED_RULES) ->
             cwd=repo_root,
             capture_output=True,
             text=True,
+            encoding="utf-8",  # not the locale code page (cp1252 on Windows)
+            errors="replace",
             timeout=180,
             check=False,
         )

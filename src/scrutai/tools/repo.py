@@ -23,7 +23,16 @@ _MAX_GREP_HITS = 50
 
 def _run(args: list[str], cwd: str = ".") -> str:
     try:
-        out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=30, check=False)
+        out = subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",  # not the locale code page (cp1252 on Windows)
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
         return out.stdout
     except (subprocess.SubprocessError, FileNotFoundError, NotADirectoryError):
         return ""
@@ -46,7 +55,7 @@ def read_file(
     p = _confine(path, repo_root)
     if p is None or not p.is_file():
         return ""
-    text = p.read_text(errors="replace")
+    text = p.read_text(encoding="utf-8", errors="replace")
     if start is None and end is None:
         return text
     lines = text.splitlines()
@@ -97,7 +106,7 @@ def _py_grep(pattern: str, repo_root: str, regex: bool, glob: str) -> list[str]:
             try:
                 if path.stat().st_size > _MAX_FILE_BYTES:
                     continue
-                text = path.read_text(errors="strict")
+                text = path.read_text(encoding="utf-8", errors="strict")
             except (OSError, UnicodeDecodeError):  # unreadable or binary
                 continue
             rel = path.relative_to(root).as_posix()

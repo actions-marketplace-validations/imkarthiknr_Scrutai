@@ -123,5 +123,5 @@ class ScrutaiConfig(BaseModel):
         p = Path(path)
         if not p.exists():
             return cls()
-        data = yaml.safe_load(p.read_text()) or {}
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         return cls.model_validate(data)

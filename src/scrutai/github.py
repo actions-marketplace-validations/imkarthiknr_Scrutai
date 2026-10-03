@@ -182,6 +182,8 @@ def detect_repo(repo_root: str = ".") -> str:
             cwd=repo_root,
             capture_output=True,
             text=True,
+            encoding="utf-8",  # not the locale code page (cp1252 on Windows)
+            errors="replace",
             check=False,
         ).stdout.strip()
     except OSError:
