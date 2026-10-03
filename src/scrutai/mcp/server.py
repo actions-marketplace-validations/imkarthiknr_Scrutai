@@ -28,9 +28,18 @@ import anyio.from_thread
 import anyio.to_thread
 from pydantic import BaseModel, Field
 
-from ..agents import REGISTRY
+from ..agents import BACKENDS, REGISTRY
 from ..config import ScrutaiConfig
 from ..diff import DiffError
+from ..eval.harness import (
+    CaseCallback,
+    CaseResult,
+    compare_backends,
+    compare_markdown,
+    load_cases,
+    markdown_report,
+    run_benchmark,
+)
 from ..github import GitHubError, PublishReport, PullRequest, publish
 from ..inputs import Source, github_client, prepare
 from ..llm import make_client
@@ -55,6 +64,7 @@ from .compat import (
     tool_annotations,
 )
 from .schemas import (
+    BenchmarkResult,
     FindingExplanation,
     FindingOut,
     PostResult,
@@ -103,6 +113,9 @@ POST_ANNOTATIONS = tool_annotations(
     idempotent=True,  # re-posting edits the summary and skips posted findings
     open_world=True,
 )
+BENCHMARK_ANNOTATIONS = tool_annotations(
+    read_only=True, destructive=False, idempotent=False, open_world=True
+)
 REVIEW_ANNOTATIONS = tool_annotations(
     read_only=True,  # reads the repo, writes nothing anywhere
     destructive=False,
@@ -120,6 +133,7 @@ class Settings:
     max_concurrent: int = 2
     # False: post_review is not offered at all (--no-post).
     allow_post: bool = True
+    benchmark: str = "benchmark/cases.jsonl"
 
 
 @dataclass
@@ -149,6 +163,7 @@ class Reviewer:
         self._slots = threading.BoundedSemaphore(max(1, settings.max_concurrent))
         # Running plus waiting for a slot; bounds threads and memory (wait=false returns at once).
         self.max_queued = max(1, settings.max_concurrent) * QUEUE_FACTOR
+        self.benchmark = Path(settings.benchmark).resolve()  # fixed by the operator at start
 
     def config(self) -> ScrutaiConfig:
         try:
@@ -268,8 +283,12 @@ def unavailable_as(error: type[Exception]) -> Iterator[None]:
         raise error(str(exc)) from exc
 
 
-class PostConfirmation(BaseModel):
-    post: bool = Field(description="Post the review to the pull request?")
+class Confirmation(BaseModel):
+    proceed: bool = Field(description="Go ahead?")
+
+
+class BenchmarkStopped(Exception):
+    """The client cancelled a benchmark run; raised between cases."""
 
 
 async def user_confirms(ctx: Any, message: str, confirm: bool) -> bool | Any:
@@ -280,17 +299,64 @@ async def user_confirms(ctx: Any, message: str, confirm: bool) -> bool | Any:
     after the user agreed. A client that can ask is always asked.
     """
     try:
-        answer = await ask_user(ctx, message, PostConfirmation)
+        answer = await ask_user(ctx, message, Confirmation)
     except ElicitationUnsupported:
         if confirm:
             return True
         raise ToolError(
-            "This client cannot ask the user to confirm. Show the user what will be posted, "
-            "and call post_review again with confirm=true only if they agree."
+            "This client cannot ask the user to confirm. Tell the user what will happen, "
+            "and call the tool again with confirm=true only if they agree."
         ) from None
     if answer.round_trip is not None:
         return answer.round_trip
-    return bool(answer.data and answer.data.get("post") is True)
+    return bool(answer.data and answer.data.get("proceed") is True)
+
+
+def benchmark(
+    path: Path,
+    config: ScrutaiConfig,
+    compare: str | None,
+    limit: int | None,
+    on_case: CaseCallback,
+) -> BenchmarkResult:
+    """Run the benchmark (blocking) and shape the result."""
+    details: list[CaseResult] = []
+    if compare:
+        comparison = compare_backends(path, config, ["native", compare], on_case, limit)
+        runs: dict[str, dict[str, Any]] = comparison["backends"]
+        metrics, report = runs["native"], compare_markdown(comparison)
+        headline = ("precision", "recall", "f1", "avg_tokens_per_case", "seconds")
+        backends = {name: {k: float(m[k]) for k in headline} for name, m in runs.items()}
+        agreement = float(comparison["agreement_with_native"][compare])
+    else:
+        metrics = run_benchmark(path, config, details, on_case, limit)
+        report, backends, agreement = markdown_report(metrics, details), None, None
+    return BenchmarkResult(
+        status="done",
+        llm_mode=config.llm_mode,
+        cases=metrics["cases"],
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        f1=metrics["f1"],
+        precision_without_critic=metrics["precision_without_critic"],
+        recall_without_critic=metrics["recall_without_critic"],
+        critic_precision_lift=metrics["critic_precision_lift"],
+        clean_case_fpr=metrics["clean_case_fpr"],
+        avg_tokens_per_case=metrics["avg_tokens_per_case"],
+        per_category={
+            cat: {k: float(v) for k, v in scores.items()}
+            for cat, scores in metrics["per_category"].items()
+        },
+        misses=[
+            f"{r.case.id}: missed {', '.join(r.missed) or '-'}; "
+            f"false positives {', '.join(r.spurious) or '-'}"
+            for r in details
+            if r.missed or r.spurious
+        ],
+        backends=backends,
+        agreement=agreement,
+        report_markdown=report,
+    )
 
 
 def publish_outcome(outcome: Outcome, repo_root: Path) -> PublishReport:
@@ -464,6 +530,72 @@ def build_server(settings: Settings, security: TransportSecuritySettings | None 
                     "skipped_off_diff": report.skipped_off_diff,
                 }
             )
+
+    @tool(
+        server,
+        name="run_benchmark",
+        title="Run the benchmark",
+        description="Run Scrutai's labelled benchmark and report precision and recall with "
+        "and without the critic, per category, plus the cases it got wrong. With "
+        "compare_backend (e.g. 'crewai') every case also runs on that agent framework and the "
+        "two are compared. With a live model every case calls the model and costs money, so "
+        "the user is asked first.",
+        annotations=BENCHMARK_ANNOTATIONS,
+        structured_output=True,
+    )
+    async def run_benchmark_tool(
+        ctx: Context,
+        compare_backend: Annotated[
+            str | None, Field(description="Another agent framework to compare, e.g. 'crewai'.")
+        ] = None,
+        limit: Annotated[
+            int | None, Field(ge=1, description="Only the first N cases (cheaper live runs).")
+        ] = None,
+        confirm: Annotated[
+            bool,
+            Field(
+                description="Only for clients that cannot ask the user themselves: true "
+                "means the user agreed to a live-model run."
+            ),
+        ] = False,
+    ) -> BenchmarkResult:
+        config = reviewer.config()
+        if compare_backend is not None and compare_backend not in BACKENDS[1:]:
+            raise ToolError(f"compare_backend must be one of {list(BACKENDS[1:])}")
+        try:
+            total = len(load_cases(reviewer.benchmark))
+        except (OSError, ValueError) as exc:
+            raise ToolError(f"cannot read the benchmark {reviewer.benchmark}: {exc}") from exc
+        runs = min(limit or total, total) * (2 if compare_backend else 1)
+        if config.llm_mode != "mock":
+            message = (
+                f"Run {runs} benchmark review(s) against the live model ({config.llm_mode})? "
+                "Each calls the model and costs money."
+            )
+            decision = await user_confirms(ctx, message, confirm)
+            if decision is not True:
+                if decision is False:
+                    return BenchmarkResult(status="declined", llm_mode=config.llm_mode)
+                return decision  # type: ignore[no-any-return]
+        stop = threading.Event()
+
+        def on_case(done: int, total: int, case: str) -> None:
+            if stop.is_set():
+                raise BenchmarkStopped
+            with contextlib.suppress(Exception):
+                anyio.from_thread.run(ctx.report_progress, done, total, f"Case {case}")
+
+        def work() -> BenchmarkResult:
+            with reviewer._slots:
+                return benchmark(reviewer.benchmark, config, compare_backend, limit, on_case)
+
+        try:
+            return await anyio.to_thread.run_sync(work, abandon_on_cancel=True)
+        except anyio.get_cancelled_exc_class():
+            stop.set()  # the abandoned worker stops after the case it is on
+            raise
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from exc
 
     # ---- results -----------------------------------------------------------
 

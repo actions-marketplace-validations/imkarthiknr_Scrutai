@@ -24,7 +24,7 @@ def make(root: Path, **kw: Any) -> Any:
 
 
 def yes(message: str) -> dict[str, Any]:
-    return {"post": True}
+    return {"proceed": True}
 
 
 async def review_pr(client: Any) -> dict[str, Any]:
@@ -48,7 +48,7 @@ async def test_post_review_after_the_user_confirms_and_stays_idempotent(
 
     def confirm(message: str) -> dict[str, Any]:
         asked.append(message)
-        return {"post": True}
+        return {"proceed": True}
 
     async with in_memory(make(tmp_path), elicit=confirm) as client:
         rid = (await review_pr(client))["review_id"]

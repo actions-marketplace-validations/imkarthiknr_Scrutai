@@ -236,6 +236,9 @@ def mcp_cmd(
     no_post: bool = typer.Option(
         False, "--no-post", help="Do not offer post_review: the server never writes to GitHub."
     ),
+    benchmark: str = typer.Option(
+        "benchmark/cases.jsonl", help="Labelled cases for the run_benchmark tool."
+    ),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
     """Serve Scrutai over the Model Context Protocol (Claude Code, Claude Desktop, Cursor...).
@@ -257,6 +260,7 @@ def mcp_cmd(
         roots=root or ["."],
         max_concurrent=max_concurrent,
         allow_post=not no_post,
+        benchmark=benchmark,
     )
     try:
         if transport is Transport.stdio:

@@ -160,3 +160,32 @@ class PostResult(BaseModel):
     skipped_off_diff: int = Field(
         default=0, description="Findings on lines GitHub can't comment on (summary only)."
     )
+
+
+class BenchmarkResult(BaseModel):
+    """Precision and recall on Scrutai's labelled benchmark, with and without the critic."""
+
+    status: Literal["done", "declined"] = Field(
+        description="declined: the user did not approve a live-model run; nothing ran."
+    )
+    llm_mode: str
+    cases: int = 0
+    precision: float | None = None
+    recall: float | None = None
+    f1: float | None = None
+    precision_without_critic: float | None = None
+    recall_without_critic: float | None = None
+    critic_precision_lift: float | None = None
+    clean_case_fpr: float | None = Field(
+        default=None, description="Share of clean diffs that got any finding."
+    )
+    avg_tokens_per_case: int | None = None
+    per_category: dict[str, dict[str, float]] = Field(default_factory=dict)
+    misses: list[str] = Field(default_factory=list, description="Cases with errors.")
+    backends: dict[str, dict[str, float]] | None = Field(
+        default=None, description="With compare_backend: headline metrics per framework."
+    )
+    agreement: float | None = Field(
+        default=None, description="With compare_backend: share of cases with identical findings."
+    )
+    report_markdown: str = ""
