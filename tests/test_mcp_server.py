@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -10,7 +11,15 @@ from typing import Any
 
 import anyio
 import pytest
-from mcp_util import annotations, in_memory, is_error, output_schema, structured, text
+from mcp_util import (
+    annotations,
+    in_memory,
+    is_error,
+    output_schema,
+    structured,
+    template_uris,
+    text,
+)
 
 from scrutai.demo import DEMO_FILE, DEMO_SOURCE
 from scrutai.inputs import Source
@@ -104,6 +113,141 @@ async def test_reviews_are_recorded_in_the_run_store(demo_repo: Path) -> None:
     assert run.status == "done" and run.summary()["verdict"] == "request_changes"
 
 
+async def test_wait_false_returns_at_once_and_get_review_polls(demo_repo: Path) -> None:
+    async with in_memory(make(demo_repo)) as client:
+        started = structured(
+            await client.call_tool("review_patch", {"patch": DEMO_PATCH, "wait": False})
+        )
+        assert started["status"] in ("running", "done") and started["review_id"]
+        for _ in range(500):
+            polled = structured(
+                await client.call_tool("get_review", {"review_id": started["review_id"]})
+            )
+            if polled["status"] != "running":
+                break
+            await anyio.sleep(0.01)
+    assert polled["status"] == "done" and polled["verdict"] == "request_changes"
+    assert {f["category"] for f in polled["findings"]} == DEMO_CATEGORIES
+
+
+async def test_a_failed_background_review_reports_its_error(demo_repo: Path) -> None:
+    async with in_memory(make(demo_repo)) as client:
+        started = structured(
+            await client.call_tool("review_git_range", {"base": "no-such-branch", "wait": False})
+        )
+        for _ in range(500):
+            polled = structured(
+                await client.call_tool("get_review", {"review_id": started["review_id"]})
+            )
+            if polled["status"] != "running":
+                break
+            await anyio.sleep(0.01)
+    assert polled["status"] == "error" and "no-such-branch" in polled["error"]
+    assert polled["verdict"] is None and polled["findings"] == []
+
+
+async def test_list_reviews_pages_newest_first(demo_repo: Path) -> None:
+    async with in_memory(make(demo_repo)) as client:
+        first = structured(await client.call_tool("review_patch", {"patch": DEMO_PATCH}))
+        second = structured(await client.call_tool("review_git_range", {"head": "feature"}))
+        page = structured(await client.call_tool("list_reviews", {"limit": 1}))
+        rest = structured(await client.call_tool("list_reviews", {"limit": 1, "offset": 1}))
+        bad = await client.call_tool("list_reviews", {"limit": 500})
+    assert page["total"] == 2 and [r["review_id"] for r in page["reviews"]] == [second["review_id"]]
+    assert rest["reviews"][0]["review_id"] == first["review_id"]
+    assert rest["reviews"][0]["verdict"] == "request_changes"
+    assert rest["reviews"][0]["findings"] == 5 and rest["reviews"][0]["created"].endswith("+00:00")
+    assert is_error(bad)
+
+
+async def test_explain_finding_shows_the_debate_and_the_code(demo_repo: Path) -> None:
+    async with in_memory(make(demo_repo)) as client:
+        review = structured(await client.call_tool("review_patch", {"patch": DEMO_PATCH}))
+        injection = next(f for f in review["findings"] if f["category"] == "injection")
+        rid = review["review_id"]
+        by_id = structured(
+            await client.call_tool(
+                "explain_finding", {"review_id": rid, "finding_id": injection["id"]}
+            )
+        )
+        by_fp = structured(
+            await client.call_tool(
+                "explain_finding", {"review_id": rid, "finding_id": injection["fingerprint"]}
+            )
+        )
+        missing = await client.call_tool("explain_finding", {"review_id": rid, "finding_id": "F99"})
+        unknown = await client.call_tool(
+            "explain_finding", {"review_id": "nope", "finding_id": "F1"}
+        )
+    assert by_id == by_fp
+    assert by_id["finding"]["line"] == 7 and by_id["history"]
+    assert "+L7:         return os.system(cmd)" in by_id["code"]
+    assert "+L1: import os" in by_id["code"]  # context around the line, not just the line
+    assert is_error(missing) and "no finding 'F99'" in text(missing)
+    assert is_error(unknown) and "no review 'nope'" in text(unknown)
+
+
+async def test_review_resources(demo_repo: Path) -> None:
+    async with in_memory(make(demo_repo)) as client:
+        rid = structured(await client.call_tool("review_patch", {"patch": DEMO_PATCH}))["review_id"]
+        uris = template_uris(await client.list_resource_templates())
+
+        async def read(uri: str) -> str:
+            return str((await client.read_resource(uri)).contents[0].text)
+
+        full = json.loads(await read(f"scrutai://reviews/{rid}"))
+        report = await read(f"scrutai://reviews/{rid}/report.md")
+        sarif = json.loads(await read(f"scrutai://reviews/{rid}/sarif"))
+        trace = (await read(f"scrutai://reviews/{rid}/trace")).splitlines()
+        with pytest.raises(Exception, match="no review"):
+            await read("scrutai://reviews/nope")
+    assert {
+        "scrutai://reviews/{review_id}",
+        "scrutai://reviews/{review_id}/report.md",
+        "scrutai://reviews/{review_id}/sarif",
+        "scrutai://reviews/{review_id}/trace",
+    } <= uris
+    assert full["review_id"] == rid and len(full["findings"]) == 5 and full["dropped"]
+    assert "os.system" in report or "injection" in report.lower()
+    assert sarif["version"] == "2.1.0" and sarif["runs"][0]["results"]
+    events = [json.loads(line) for line in trace]
+    assert events[0]["run"] == rid and any(e["kind"] == "result" for e in events)
+
+
+async def test_agents_and_config_resources(tmp_path: Path) -> None:
+    cfg = tmp_path / "scrutai.yml"
+    cfg.write_text("enabled_agents: [security, tests]\n")
+    async with in_memory(make(tmp_path, config_path=str(cfg))) as client:
+        listed = {str(r.uri) for r in (await client.list_resources()).resources}
+        agents = json.loads((await client.read_resource("scrutai://agents")).contents[0].text)
+        config = json.loads((await client.read_resource("scrutai://config")).contents[0].text)
+    assert {"scrutai://agents", "scrutai://config"} <= listed
+    by_name = {a["name"]: a for a in agents}
+    assert set(by_name) == {"security", "correctness", "tests", "performance", "style"}
+    assert by_name["security"]["enabled"] and not by_name["style"]["enabled"]
+    assert "injection" in by_name["security"]["categories"]
+    assert config["config"]["enabled_agents"] == ["security", "tests"]
+    assert config["server"]["roots"] == [str(tmp_path.resolve())]
+
+
+async def test_a_full_queue_refuses_new_reviews(demo_repo: Path) -> None:
+    srv = make(demo_repo, max_concurrent=1)
+    for i in range(server.QUEUE_FACTOR):  # pretend these are still running
+        srv.scrutai.runs.add(server.Run(id=f"busy{i}", source="patch", label="x"))
+    async with in_memory(srv) as client:
+        result = await client.call_tool("review_patch", {"patch": DEMO_PATCH, "wait": False})
+    assert is_error(result) and "server busy" in text(result)
+
+
+def test_config_redaction() -> None:
+    data = {"api_key": "sk-123", "token_budget": 5, "models": {"secret": "x", "critic": "m"}}
+    assert server._redact(data) == {
+        "api_key": "***",
+        "token_budget": 5,
+        "models": {"secret": "***", "critic": "m"},
+    }
+
+
 @pytest.mark.parametrize(
     ("tool", "args", "error"),
     [
@@ -180,20 +324,22 @@ async def test_cancelling_a_call_stops_the_review(
     async with anyio.create_task_group() as tg:
 
         async def call() -> None:
-            await reviewer.review(Source(kind="patch", patch=DEMO_PATCH), demo_repo, Ctx())
+            await reviewer.review(Source(kind="patch", patch=DEMO_PATCH), demo_repo, Ctx(), True)
 
         tg.start_soon(call)
         while not started.is_set():
             await anyio.sleep(0.01)
         tg.cancel_scope.cancel()
 
+    (run,) = reviewer.runs.all()
     for _ in range(200):  # the abandoned worker notices within a poll
-        if "cancelled" in seen:
+        if run.status != "running":
             break
         await anyio.sleep(0.01)
     assert seen == {"cancelled": True}
-    (run,) = reviewer.runs.all()
-    assert run.status == "error" and run.error == "cancelled by the client"
+    # The partial result is kept, and marked as such.
+    summary = reviewer.summary(run)
+    assert summary.status == "done" and summary.cancelled and summary.partial
 
 
 def test_roots_must_exist(tmp_path: Path) -> None:

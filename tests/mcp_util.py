@@ -68,3 +68,8 @@ def annotations(tool: Any) -> dict[str, Any]:
 def output_schema(tool: Any) -> dict[str, Any] | None:
     schema = getattr(tool, "output_schema", None) or getattr(tool, "outputSchema", None)
     return schema if isinstance(schema, dict) else None
+
+
+def template_uris(result: Any) -> set[str]:
+    templates = getattr(result, "resource_templates", None) or result.resourceTemplates
+    return {getattr(t, "uri_template", None) or t.uriTemplate for t in templates}

@@ -16,13 +16,14 @@ from mcp.types import ToolAnnotations
 try:  # mcp >= 2
     from mcp.server.mcpserver import Context
     from mcp.server.mcpserver import MCPServer as Server
+    from mcp.server.mcpserver.exceptions import ResourceNotFoundError as ResourceError
     from mcp.server.mcpserver.exceptions import ToolError
 
     MCP_MAJOR = 2
 except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import Context
     from mcp.server.fastmcp import FastMCP as Server
-    from mcp.server.fastmcp.exceptions import ToolError
+    from mcp.server.fastmcp.exceptions import ResourceError, ToolError
 
     MCP_MAJOR = 1
 
@@ -49,6 +50,11 @@ def tool(server: Any, **options: Any) -> Callable[[F], F]:
     return cast(Callable[[F], F], server.tool(**options))
 
 
+def resource(server: Any, uri: str, **options: Any) -> Callable[[F], F]:
+    """`server.resource(...)`, typed like `tool`."""
+    return cast(Callable[[F], F], server.resource(uri, **options))
+
+
 def new_server(name: str, instructions: str, security: TransportSecuritySettings) -> Any:
     """A server instance; `security` is only used by the HTTP transport."""
     if MCP_MAJOR == 2:
@@ -66,6 +72,7 @@ def http_app(server: Any, security: TransportSecuritySettings, host: str) -> Any
 __all__ = [
     "MCP_MAJOR",
     "Context",
+    "ResourceError",
     "Server",
     "ToolAnnotations",
     "tool_annotations",
@@ -74,4 +81,5 @@ __all__ = [
     "TransportSecuritySettings",
     "http_app",
     "new_server",
+    "resource",
 ]

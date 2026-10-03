@@ -32,6 +32,8 @@ class Run:
     error: str | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     truncated: bool = False
+    # What a front end keeps besides the events (the MCP server: the full result).
+    outcome: Any = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def append(self, event: dict[str, Any]) -> None:
