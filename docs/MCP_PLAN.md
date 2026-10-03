@@ -1,7 +1,7 @@
 # Scrutai MCP server: implementation plan
 
-Status: **approved, in progress** (2026-10-03). This document records the design and the decisions
-behind it; [`docs/MCP.md`](MCP.md) will be the user-facing reference once the server ships.
+Status: **shipped in 0.4.0** (2026-10-03). This document records the design and the decisions behind
+it; [`docs/MCP.md`](MCP.md) is the user-facing reference.
 
 ## Goal
 
@@ -97,7 +97,7 @@ notifications. A client cancel request sets a flag that a `CancellableClient` (m
 
 | File | Change |
 |---|---|
-| `src/scrutai/inputs.py` (new) | One `resolve_diff()` for demo / git / patch / PR, shared by the CLI, the web server and MCP. |
+| `src/scrutai/inputs.py` (new) | One `prepare(Source)` for demo / git / patch / PR, shared by the CLI, the web server and MCP. |
 | `src/scrutai/runs.py` (new) | `Run` / `RunStore` moved out of `web/server.py`, shared by web and MCP. |
 | `src/scrutai/llm.py` | `CancellableClient`. |
 | `src/scrutai/orchestrator.py` | `review_diff(..., cancel=None)`. |
@@ -136,3 +136,21 @@ notifications. A client cancel request sets a flag that a `CancellableClient` (m
   - HTTP rejects missing or wrong tokens and unexpected `Host` headers.
 - **GitHub:** `post_review` against the in-process fake GitHub API stays idempotent.
 - **Both SDK majors:** the suite runs on `mcp` 1.x and 2.x.
+
+## What changed during implementation
+
+- **mcp 2 dropped server-to-client requests** on protocol 2026-07-28, so `ctx.elicit()` can't
+  confirm a post there. `compat.ask_user()` uses elicitation on older protocols and an
+  *input-required* round trip on the new one. Clients that can't ask at all must pass
+  `confirm=true`.
+- **mcp 2 hides the text of unexpected exceptions** in resources and prompts. Missing reviews
+  are raised as `ResourceError` or `MCPError` there, so the client sees the reason.
+- **mcp 1.x silently ignores snake_case `ToolAnnotations` keywords.** Annotations are built from
+  their wire names.
+- **A cancelled review is kept as a partial result** (`cancelled: true`) rather than as an error,
+  so `get_review` can still show what was found.
+- **Extra guards found while building:**
+  - `wait=false` reviews are capped (5 × `--max-concurrent` in progress);
+  - `post_review` refuses when the PR has new commits since the review;
+  - a live `run_benchmark` asks the user first;
+  - the benchmark file is fixed by the operator (`--benchmark`).

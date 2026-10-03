@@ -22,6 +22,7 @@ New here? Read [README.md](README.md) first for *what* Scrutai does, and
   - [Add a framework backend](#add-a-framework-backend)
   - [Add or change a trace event](#add-or-change-a-trace-event)
   - [Work on the web UI](#work-on-the-web-ui)
+  - [Add an MCP tool](#add-an-mcp-tool)
 - [Testing guide](#testing-guide)
 - [Conventions](#conventions)
 - [Pull requests](#pull-requests)
@@ -71,13 +72,14 @@ cd web && npm ci && cd ..
 ```
 
 The `dev` extra installs everything the test suite exercises: pytest, ruff, mypy, the web server,
-Playwright, OpenTelemetry and CrewAI.
+Playwright, OpenTelemetry, CrewAI and the MCP SDK. CrewAI pins the MCP SDK to 1.28, so the
+main environment tests MCP on 1.x; CI tests it on 2.x as well (see below).
 
 Check that it works:
 
 ```bash
 scrutai review --demo   # should report "5 issue(s) upheld" and exit with code 1
-pytest -q               # should report 150+ passed
+pytest -q               # should report 200+ passed
 ```
 
 You never need an API key to develop. Everything runs against the offline mock model.
@@ -93,6 +95,11 @@ ruff format --check .
 mypy src                                            # strict mode
 pytest -q                                           # incl. browser E2E if Chromium is installed
 scrutai eval --min-precision 0.95 --min-recall 0.8  # the benchmark gate
+
+# MCP job: the MCP tests again, on MCP SDK 2.x (a separate venv: CrewAI pins 1.x)
+uv venv .venv-mcp2 --python 3.12
+uv pip install --python .venv-mcp2 -e . "mcp>=2" pytest httpx pyyaml
+.venv-mcp2/bin/pytest -q tests/test_mcp_*.py
 
 # Web job (from web/)
 npm run typecheck
@@ -158,7 +165,7 @@ spoof the protocol.
 
 | Path | Responsibility |
 |---|---|
-| `src/scrutai/cli.py` | `review`, `serve` and `eval` commands; output formats; exit codes. |
+| `src/scrutai/cli.py` | `review`, `serve`, `mcp` and `eval` commands; output formats; exit codes. |
 | `src/scrutai/config.py` | `ScrutaiConfig`: every option, defaults and validation. |
 | `src/scrutai/models.py` | Pydantic models: `ChangedFile`, `DiffContext`, `Finding`, `ReviewResult`. |
 | `src/scrutai/diff.py` | Git and patch input, ref validation, include/exclude filters, chunking. |
@@ -176,6 +183,13 @@ spoof the protocol.
 | `src/scrutai/github.py` | GitHub REST client; idempotent `publish()`. |
 | `src/scrutai/trace.py` | Tracer, spans, events, OpenTelemetry and Langfuse hooks. |
 | `src/scrutai/eval/harness.py` | Benchmark loading, hermetic case runs, metrics, `--compare`. |
+| `src/scrutai/inputs.py` | `Source` + `prepare()`: the one input path (demo, git range, patch, file, PR) every front end uses. |
+| `src/scrutai/runs.py` | `Run` / `RunStore`: reviews in flight and finished, shared by the web and MCP servers. |
+| `src/scrutai/progress.py` | `ProgressListener`: trace events → "step N of M" progress. |
+| `src/scrutai/mcp/server.py` | The MCP server: tools, resources, prompts; `Reviewer` runs and keeps reviews. |
+| `src/scrutai/mcp/compat.py` | The only module that imports the MCP SDK; hides 1.x vs 2.x differences. |
+| `src/scrutai/mcp/schemas.py` | Structured tool output (`ReviewSummary`, `FindingExplanation`, …). |
+| `src/scrutai/mcp/security.py` | Root allowlist, input caps, HTTP bearer-token and `Host` guard. |
 | `src/scrutai/web/server.py` | FastAPI app: runs, SSE event stream, replay. |
 | `src/scrutai/web/static/` | **Built** UI bundle (generated; never edit by hand). |
 | `web/src/` | The React UI source: `reduce.ts` (all UI state), `components/`, `api.ts`. |
@@ -317,6 +331,30 @@ cd web && npm run dev         # terminal 2: Vite dev server with hot reload; /ap
 - Support light and dark themes (CSS variables in `styles.css`), keyboard focus, and phone widths:
   the page must never scroll horizontally. `tests/test_ui_e2e.py` checks the last point.
 
+### Add an MCP tool
+
+The MCP server is a thin adapter, so a new tool is usually a few lines in `build_server()` in
+`src/scrutai/mcp/server.py`.
+
+1. **Register it with the typed helpers** from `compat.py`:
+   `@tool(server, name=..., title=..., description=..., annotations=..., structured_output=True)`.
+   Never import `mcp.server` anywhere else: `compat.py` keeps 1.x and 2.x working.
+2. **Return a Pydantic model** from `schemas.py`, so clients get an output schema.
+3. **Declare honest annotations** with `tool_annotations(...)`. Anything that writes outside the
+   server is `destructive=True` and must ask the user with `ask_user()` (see `post_review`).
+4. **Trust no argument.**
+   - Resolve paths with `reviewer.roots.resolve()`.
+   - Cap sizes.
+   - Raise `ToolError` with a clear message for bad input.
+   - Inside a resource or prompt, raise `ResourceError` or `invalid_params()` instead: mcp 2 hides
+     the text of other exceptions.
+5. **Keep blocking work off the event loop:** `await anyio.to_thread.run_sync(...,
+   abandon_on_cancel=True)`, and honour cancellation (see `Reviewer.review`).
+6. **Test it through a real client.** Use `in_memory()` from `tests/mcp_util.py`, which works on
+   both SDK majors and can answer elicitation. Add a case to `tests/test_mcp_*.py`, and run the
+   MCP job above so it also passes on mcp 2.
+7. **Document it** in the tools table in `docs/MCP.md`.
+
 ## Testing guide
 
 The test suite runs **fully offline** and never calls a real model. The main tools:
@@ -327,7 +365,8 @@ The test suite runs **fully offline** and never calls a real model. The main too
 | A model that says exactly what a test needs | A small scripted client with `complete()`, `tokens_used` and `cost_usd`; see `Scripted` in `tests/test_agents.py` and `Critic` in `tests/test_critic.py`. |
 | A real git repository | The `git_repo` fixture in `tests/conftest.py`: pass `{path: content}`, get a repo with a `feature` branch over `main`. |
 | Semgrep without installing it | The `fake_semgrep` fixture in `tests/test_semgrep.py`. |
-| GitHub without the network | `FakeGitHub` in `tests/test_github.py`: an in-process HTTP server; also runs the Action's real shell step. |
+| GitHub without the network | The `github` fixture (`FakeGitHub` in `tests/fake_github.py`): an in-process HTTP server; also runs the Action's real shell step. |
+| An MCP client | `tests/mcp_util.py`: `in_memory(server, elicit=...)` on either SDK major, plus `over_http()` for a real `scrutai mcp` process; see `tests/test_mcp_transports.py`. |
 | The live LiteLLM path | `tests/test_live_client.py`: LiteLLM's `mock_response` builds real response objects. |
 | The UI in a browser | `tests/test_ui_e2e.py`: a real server and Chromium; skipped if no browser. Set `SCRUTAI_CHROMIUM` to use a specific binary. |
 | UI state logic | `web/src/reduce.test.ts` (vitest), against a trace recorded from the real backend. |

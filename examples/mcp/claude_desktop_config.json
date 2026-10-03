@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "scrutai": {
+      "command": "/path/to/venv/bin/scrutai",
+      "args": [
+        "mcp",
+        "--root", "/path/to/your/repo",
+        "--config", "/path/to/your/repo/.scrutai.yml"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "only needed for review_pull_request / post_review"
+      }
+    }
+  }
+}
