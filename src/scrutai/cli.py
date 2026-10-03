@@ -237,7 +237,7 @@ def mcp_cmd(
         False, "--no-post", help="Do not offer post_review: the server never writes to GitHub."
     ),
     benchmark: str = typer.Option(
-        "benchmark/cases.jsonl", help="Labelled cases for the run_benchmark tool."
+        "", help="Labelled cases for run_benchmark (default: the bundled benchmark)."
     ),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
@@ -285,7 +285,9 @@ def mcp_cmd(
 
 @app.command("eval")
 def eval_cmd(
-    benchmark: str = typer.Option("benchmark/cases.jsonl", help="Labeled cases (JSONL)."),
+    benchmark: str = typer.Option(
+        "", help="Labelled cases (JSONL); default: the bundled 50-case benchmark."
+    ),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
     min_precision: float = typer.Option(0.0, help="Exit 1 if precision falls below this."),
     min_recall: float = typer.Option(0.0, help="Exit 1 if recall falls below this."),
@@ -297,6 +299,7 @@ def eval_cmd(
 ) -> None:
     """Run the labeled benchmark and report precision / recall / critic lift."""
     from .eval.harness import (
+        BUNDLED_CASES,
         CaseResult,
         compare_backends,
         compare_markdown,
@@ -304,6 +307,7 @@ def eval_cmd(
         run_benchmark,
     )
 
+    benchmark = benchmark or str(BUNDLED_CASES)
     if not Path(benchmark).exists():
         console.print(f"[red]No benchmark at {benchmark}[/red]")
         raise typer.Exit(code=2)

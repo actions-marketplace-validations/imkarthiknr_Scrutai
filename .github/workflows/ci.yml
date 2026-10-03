@@ -48,6 +48,22 @@ jobs:
       - name: MCP tests on mcp 2.x
         run: uv run --no-sync pytest -q tests/test_mcp_server.py tests/test_mcp_transports.py tests/test_mcp_github.py tests/test_mcp_benchmark.py tests/test_mcp_prompts.py
 
+  package:
+    # What `pip install scrutai` gets: build, check the PyPI metadata, run the wheel.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - name: The wheel works outside the repository
+        run: |
+          uv venv /tmp/wheel --python 3.12
+          uv pip install --python /tmp/wheel/bin/python "$(ls dist/*.whl)[web,mcp]"
+          cd /tmp
+          /tmp/wheel/bin/scrutai review --demo || test $? -eq 1
+          /tmp/wheel/bin/scrutai eval --min-precision 0.95 --min-recall 0.8
+
   web:
     runs-on: ubuntu-latest
     defaults:

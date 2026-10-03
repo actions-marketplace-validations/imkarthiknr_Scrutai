@@ -25,7 +25,7 @@ Action and the web UI, with the same config file, budgets and mock mode.
 ## Install
 
 ```bash
-pip install "scrutai[mcp] @ git+https://github.com/imkarthiknr/Scrutai.git"
+pip install "scrutai[mcp]"
 scrutai mcp --help
 ```
 
@@ -240,7 +240,7 @@ scrutai mcp [OPTIONS]
   --allowed-host TEXT       HTTP: extra Host header to accept (a proxy's name); repeatable
   --max-concurrent INTEGER  reviews allowed to run at once (default 2)
   --no-post                 do not offer post_review
-  --benchmark TEXT          labelled cases for run_benchmark (default benchmark/cases.jsonl)
+  --benchmark TEXT          labelled cases for run_benchmark (default: the bundled benchmark)
   --config TEXT             Scrutai config (default .scrutai.yml)
 
 Environment:

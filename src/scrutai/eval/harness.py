@@ -179,6 +179,9 @@ def summarize(results: list[CaseResult]) -> dict[str, Any]:
     }
 
 
+# The labelled benchmark shipped inside the package (so `pip install scrutai` has it).
+BUNDLED_CASES = Path(__file__).with_name("cases.jsonl")
+
 # (cases done, cases in total, id of the case just finished); may raise to stop early.
 CaseCallback = Callable[[int, int, str], None]
 

@@ -6,6 +6,7 @@ the pattern that makes a non-deterministic system testable in CI.
 
 from scrutai import review_diff
 from scrutai.config import ScrutaiConfig
+from scrutai.eval.harness import BUNDLED_CASES
 from scrutai.llm import MockLLMClient
 from scrutai.models import ChangedFile, DiffContext, Verdict
 
@@ -29,6 +30,6 @@ def test_clean_diff_survives_clean() -> None:
 def test_eval_harness_reports_precision() -> None:
     from scrutai.eval.harness import run_benchmark
 
-    metrics = run_benchmark("benchmark/cases.jsonl", ScrutaiConfig())
+    metrics = run_benchmark(BUNDLED_CASES, ScrutaiConfig())
     assert 0.0 <= metrics["precision"] <= 1.0
     assert metrics["cases"] >= 30

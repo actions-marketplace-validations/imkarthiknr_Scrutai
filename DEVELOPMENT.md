@@ -195,7 +195,7 @@ spoof the protocol.
 | `src/scrutai/web/static/` | **Built** UI bundle (generated; never edit by hand). |
 | `web/src/` | The React UI source: `reduce.ts` (all UI state), `components/`, `api.ts`. |
 | `action.yml` | The composite GitHub Action. |
-| `benchmark/cases.jsonl` | The labelled benchmark. |
+| `src/scrutai/eval/cases.jsonl` | The labelled benchmark (shipped in the package). |
 
 ## Recipes
 
@@ -266,7 +266,7 @@ Example: an `accessibility` agent for front-end code.
 
 ### Add benchmark cases
 
-Append JSON lines to `benchmark/cases.jsonl`:
+Append JSON lines to `src/scrutai/eval/cases.jsonl`:
 
 ```json
 {"id": "trap-secret-env", "file": "settings.py", "patch": "+API_KEY = os.environ[\"API_KEY\"]\n", "labels": [], "note": "read from the environment"}
@@ -436,11 +436,31 @@ that changes benchmark numbers.
 Versions follow [Semantic Versioning](https://semver.org/). While Scrutai is `0.x`, a minor version
 may change behaviour; RELEASES.md calls those changes out.
 
-1. Move the **Unreleased** notes in [RELEASES.md](RELEASES.md) under a new version heading.
-2. Bump the version in all four places: `pyproject.toml`, `src/scrutai/__init__.py`,
-   `web/package.json`, and the version badge in `README.md`.
+1. Move the **Unreleased** notes in [RELEASES.md](RELEASES.md) under a new version heading
+   (`## 0.X.0`; the release workflow copies that section into the GitHub release).
+2. Bump the version in all three places: `pyproject.toml`, `src/scrutai/__init__.py` and
+   `web/package.json` (`cd web && npm version 0.X.0 --no-git-tag-version`). The README's PyPI
+   badge updates itself.
 3. Rebuild the UI (`cd web && npm run build`) and commit the bundle.
-4. Merge to `main` with CI green, then tag the release: `git tag v0.X.0 && git push origin v0.X.0`.
+4. Merge to `main` with CI green (the `package` job builds the wheel and runs it outside the
+   repository), then tag the release: `git tag v0.X.0 && git push origin v0.X.0`.
+
+The tag starts `.github/workflows/release.yml`:
+
+1. It checks that the tag matches `pyproject.toml`'s version.
+2. It builds the wheel and sdist, runs `twine check`, and smoke-tests the wheel in a clean
+   environment.
+3. It publishes to **TestPyPI**, then to **PyPI**, through trusted publishing (no API tokens
+   exist).
+4. It creates the GitHub release with the built files attached.
+
+To rehearse without publishing to PyPI, run the workflow manually (Actions → release → Run
+workflow): that run stops after TestPyPI. A version number can be uploaded to PyPI only once,
+even if it is deleted later.
+
+One-time setup, done by the PyPI project owner: on pypi.org and test.pypi.org add a trusted
+publisher with owner `imkarthiknr`, repository `Scrutai`, workflow `release.yml`, and
+environment `pypi` or `testpypi` respectively.
 
 ## Debugging tips
 

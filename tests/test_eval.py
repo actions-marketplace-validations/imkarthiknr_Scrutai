@@ -8,9 +8,16 @@ from typer.testing import CliRunner
 
 from scrutai.cli import app
 from scrutai.config import ScrutaiConfig
-from scrutai.eval.harness import Case, CaseResult, load_cases, run_benchmark, run_case
+from scrutai.eval.harness import (
+    BUNDLED_CASES,
+    Case,
+    CaseResult,
+    load_cases,
+    run_benchmark,
+    run_case,
+)
 
-BENCH = "benchmark/cases.jsonl"
+BENCH = str(BUNDLED_CASES)
 
 
 def _write(tmp_path: Path, *cases: dict[str, object]) -> str:
