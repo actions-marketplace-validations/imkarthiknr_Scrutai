@@ -9,7 +9,6 @@ scrutai eval --min-precision 0.9          # run the benchmark as a CI gate
 from __future__ import annotations
 
 import json
-import os
 from enum import StrEnum
 from pathlib import Path
 
@@ -19,9 +18,9 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from .config import ScrutaiConfig
-from .demo import review_demo
-from .diff import DiffError, apply_filters, diff_from_file, diff_from_git, parse_diff
-from .github import GitHubClient, GitHubError, PullRequest, detect_repo, publish
+from .diff import DiffError
+from .github import GitHubError, publish
+from .inputs import Source, prepare
 from .llm import make_client
 from .models import ReviewResult
 from .orchestrator import review_diff
@@ -131,40 +130,32 @@ def review(
     if post and pr is None:
         console.print("[red]--post needs --pr[/red]")
         raise typer.Exit(code=2)
-    gh: tuple[GitHubClient, PullRequest] | None = None
     tracer = _make_tracer(config, trace)
     if demo:
-        result = review_demo(config, tracer)
+        source = Source(kind="demo")
+    elif pr is not None:
+        source = Source(kind="pr", pr=pr, github_repo=github_repo or "")
+    elif diff_file:
+        source = Source(kind="file", path=diff_file)
     else:
-        try:
-            if pr is not None:
-                client = GitHubClient(
-                    os.environ.get("GITHUB_TOKEN", ""),
-                    github_repo or detect_repo(repo),
-                    os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        source = Source(kind="git", base=base, head=head)
+    try:
+        with prepare(source, config, repo) as prepared:
+            result = review_diff(prepared.diff, config, make_client(config.llm_mode), tracer)
+            if post and prepared.github is not None and prepared.pull is not None:
+                try:
+                    rep = publish(prepared.github, prepared.pull, result, prepared.diff)
+                except GitHubError as exc:
+                    console.print(f"[red]Could not post review:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
+                console.print(
+                    f"[dim]PR #{pr}: summary {rep.summary}, {rep.posted} new inline "
+                    f"comment(s), {rep.skipped_duplicates} already posted, "
+                    f"{rep.skipped_off_diff} off-diff.[/dim]"
                 )
-                pull = client.pull_request(pr)
-                diff = parse_diff(client.pull_request_diff(pr), repo_root=repo, head=pull.head_sha)
-                gh = (client, pull)
-            elif diff_file:
-                diff = diff_from_file(diff_file, repo_root=repo)
-            else:
-                diff = diff_from_git(base, head, repo)
-        except (DiffError, GitHubError) as exc:
-            console.print(f"[red]Could not build diff:[/red] {exc}")
-            raise typer.Exit(code=2) from exc
-        diff = apply_filters(diff, config.include, config.exclude)
-        result = review_diff(diff, config, make_client(config.llm_mode), tracer)
-        if gh is not None and post:
-            try:
-                rep = publish(gh[0], gh[1], result, diff)
-            except GitHubError as exc:
-                console.print(f"[red]Could not post review:[/red] {exc}")
-                raise typer.Exit(code=2) from exc
-            console.print(
-                f"[dim]PR #{pr}: summary {rep.summary}, {rep.posted} new inline comment(s), "
-                f"{rep.skipped_duplicates} already posted, {rep.skipped_off_diff} off-diff.[/dim]"
-            )
+    except (DiffError, GitHubError) as exc:
+        console.print(f"[red]Could not build diff:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
 
     if tracer is not None:
         tracer.close()
@@ -198,7 +189,8 @@ def serve(
     try:
         import uvicorn
 
-        from .web.server import Run, RunStore, create_app, load_trace
+        from .runs import Run, RunStore, load_trace
+        from .web.server import create_app
     except ImportError as exc:
         console.print('[red]The web UI needs extras:[/red] pip install "scrutai[web]"')
         raise typer.Exit(code=2) from exc
