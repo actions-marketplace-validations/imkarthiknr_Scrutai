@@ -21,7 +21,10 @@
 [Contributing](DEVELOPMENT.md) ·
 [Releases](RELEASES.md)
 
-<img src="docs/images/theater.png" alt="The Scrutai agent theater mid-review: the critic in round 1, the defend loop active, three findings on trial" width="900">
+<img src="docs/images/theater.gif" alt="Screen recording of the Scrutai agent theater replaying a review: specialists light up, the critic loops through two rounds, and findings move from On trial to Upheld or Killed" width="900">
+
+<sub>The agent theater replaying a real review of the bundled demo (mock mode) ·
+<a href="docs/images/theater.mp4">watch it as MP4</a> · <a href="#see-it-in-action">more screenshots</a></sub>
 
 </div>
 
@@ -32,6 +35,7 @@
 - [Why Scrutai](#why-scrutai)
 - [Features](#features)
 - [Quickstart](#quickstart)
+  - [See it in action](#see-it-in-action)
 - [Installation](#installation)
 - [Usage](#usage)
   - [Review a branch, a patch or a PR](#review-a-branch-a-patch-or-a-pr)
@@ -109,22 +113,38 @@ scrutai serve                          # the agent theater at http://127.0.0.1:8
 scrutai eval                           # the benchmark: precision, recall, critic lift
 ```
 
-Expected output of the demo (abridged):
+What the demo prints: five findings survived cross-examination, and the critic killed a planted trap
+(a shell call that only appears in a comment).
 
-```text
-Verdict: request_changes   agents=security,correctness,tests,style rounds=2 tokens=9152 cost=$0.0000
-5 issue(s) upheld. Most severe: Possible command/eval injection (high).
+<img src="docs/images/cli-review.png" alt="Terminal output of scrutai review --demo --show-dropped: verdict request_changes, a table of five upheld findings with severity, agent, confidence and file:line, and a table of one finding dropped by the critic because the pattern only appears in a comment" width="900">
 
- Severity  Agent        Conf  File:Line         Finding
- high      security     0.85  app/runner.py:7   Possible command/eval injection
- medium    correctness  0.85  app/runner.py:4   Mutable default argument
- medium    correctness  0.85  app/runner.py:8   Overly broad exception handler
- low       tests        0.85  app/runner.py:4   New function `run` has no tests
- low       style        0.85  app/runner.py:9   Debug leftover
+### See it in action
 
-                         Dropped by the critic
- security  app/runner.py:5  Possible command/eval injection  Pattern only appears in a comment or string literal.
-```
+**The agent theater** (`scrutai serve`): every finding goes on trial. Expand a card to read the
+critic's challenge, the specialist's defense and the final ruling.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/theater-verdict.png" alt="The agent theater after a review: run statistics, the verdict Request Changes, and the review graph from route through five specialists, collect, critic with its defend loop, to verdict"></td>
+<td width="50%"><img src="docs/images/theater-debate.png" alt="The trial board: five upheld findings and one killed; the Mutable default argument card is expanded to show round 1 challenge, the correctness agent's defense, and round 2 uphold"></td>
+</tr>
+<tr>
+<td><sub>The finished review: stats, verdict and the review graph.</sub></td>
+<td><sub>A finding's trial: challenged, defended, then upheld.</sub></td>
+</tr>
+</table>
+
+**The benchmark** (`scrutai eval`): the critic removes every false positive without losing recall.
+
+<img src="docs/images/cli-eval.png" alt="Terminal output of scrutai eval: 50 cases; with the critic precision 1.0 and recall 0.897 with 0 false positives, versus specialists only precision 0.765, recall 0.897 and 8 false positives" width="760">
+
+**From an AI assistant** (`scrutai mcp`): any MCP client can review and dig into findings.
+[`examples/mcp/try_it.py`](examples/mcp/try_it.py) is a ten-second, offline way to try it.
+
+<img src="docs/images/mcp-client.png" alt="Terminal output of examples/mcp/try_it.py: connected to scrutai mcp with 8 tools, review_patch returns verdict request_changes and findings F1 to F5, then explain_finding F2 shows the critic's challenge, the specialist's defense, the rulings per round and the code" width="900">
+
+<sub>All screenshots and the recording are captured from real runs by
+[`scripts/capture_media.py`](scripts/capture_media.py).</sub>
 
 ## Installation
 

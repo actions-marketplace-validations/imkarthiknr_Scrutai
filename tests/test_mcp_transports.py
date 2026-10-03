@@ -126,3 +126,20 @@ def test_cli_refuses_a_short_token(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cli_refuses_a_missing_root() -> None:
     result = CliRunner().invoke(app, ["mcp", "--root", "/definitely/not/here"])
     assert result.exit_code == 2 and "not a directory" in result.output
+
+
+def test_the_example_client_runs(tmp_path: Path) -> None:
+    """examples/mcp/try_it.py (shown in the README) keeps working."""
+    example = Path(__file__).resolve().parents[1] / "examples" / "mcp" / "try_it.py"
+    env = {**os.environ, "PATH": f"{Path(SCRUTAI).parent}{os.pathsep}{os.environ['PATH']}"}
+    proc = subprocess.run(
+        [sys.executable, "-W", "ignore", str(example)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "verdict: request_changes" in proc.stdout
+    assert "> call explain_finding F2" in proc.stdout and "defense:" in proc.stdout
