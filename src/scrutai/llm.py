@@ -152,6 +152,42 @@ class BudgetedClient:
         return getattr(self.inner, "last_call_tokens", None)
 
 
+class ReviewCancelled(LLMError):
+    """The caller cancelled the review; no further calls are made."""
+
+
+class CancellableClient:
+    """Wraps any client and refuses calls once `cancel` is set.
+
+    Like the budget guardrail, cancellation never kills a review mid-flight:
+    calls already running finish, new ones raise, and the review ends partial
+    with anything the critic had not judged withheld.
+    """
+
+    def __init__(self, inner: LLMClient, cancel: threading.Event) -> None:
+        self.inner = inner
+        self.cancel = cancel
+        self.cancelled = False
+
+    @property
+    def tokens_used(self) -> int:
+        return self.inner.tokens_used
+
+    @property
+    def cost_usd(self) -> float:
+        return self.inner.cost_usd
+
+    @property
+    def last_call_tokens(self) -> int | None:
+        return getattr(self.inner, "last_call_tokens", None)
+
+    def complete(self, *, model: str, system: str, prompt: str) -> str:
+        if self.cancel.is_set():
+            self.cancelled = True
+            raise ReviewCancelled("review cancelled by the caller")
+        return self.inner.complete(model=model, system=system, prompt=prompt)
+
+
 def make_client(mode: str) -> LLMClient:
     if mode == "live":
         return LiteLLMClient()
@@ -166,10 +202,12 @@ from .mock import MockLLMClient  # noqa: E402
 __all__ = [
     "BudgetExceeded",
     "BudgetedClient",
+    "CancellableClient",
     "LLMClient",
     "LLMError",
     "LiteLLMClient",
     "MockLLMClient",
+    "ReviewCancelled",
     "extract_json",
     "make_client",
 ]

@@ -19,6 +19,7 @@ ReviewResult.
 from __future__ import annotations
 
 import operator
+import threading
 from typing import Annotated, Any, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
@@ -29,7 +30,7 @@ from .concurrency import parallel_map
 from .config import ScrutaiConfig
 from .critic import critique, dedupe
 from .diff import chunk_diff
-from .llm import BudgetedClient, LLMClient
+from .llm import BudgetedClient, CancellableClient, LLMClient
 from .models import DiffContext, Finding, ReviewResult, Verdict
 from .router import heuristic_route, route
 from .trace import Tracer, TracingClient, emit, finding_ref, span, traced_node, tracing
@@ -192,25 +193,45 @@ def _summarize(findings: list[Finding], agents: list[str]) -> str:
 
 
 def review_diff(
-    diff: DiffContext, config: ScrutaiConfig, llm: LLMClient, tracer: Tracer | None = None
+    diff: DiffContext,
+    config: ScrutaiConfig,
+    llm: LLMClient,
+    tracer: Tracer | None = None,
+    cancel: threading.Event | None = None,
 ) -> ReviewResult:
-    """Review one diff. The entry point the CLI, the Action and the eval harness share."""
+    """Review one diff. The entry point every front end shares.
+
+    Set `cancel` from another thread to stop the review early: no further
+    model calls are made and the result comes back marked partial.
+    """
     budgeted = BudgetedClient(llm, config.token_budget, config.max_cost_usd)
-    client: LLMClient = TracingClient(budgeted) if tracer is not None else budgeted
+    guarded: LLMClient = budgeted
+    cancellable: CancellableClient | None = None
+    if cancel is not None:
+        cancellable = CancellableClient(budgeted, cancel)
+        guarded = cancellable
+    client: LLMClient = TracingClient(guarded) if tracer is not None else guarded
     with tracing(tracer), span("review", "diff", files=len(diff.files)) as extra:
         graph = build_graph(client, config)
         final = graph.invoke({"diff": diff})
         result: ReviewResult = final["result"]
+        if budgeted.exhausted:
+            result.budget_exhausted = True
+            result.summary += (
+                f" Budget exhausted ({budgeted.tokens_used} tokens): this review is partial."
+            )
+        if cancellable is not None and cancellable.cancelled:
+            result.cancelled = True
+            result.summary += " Cancelled: this review is partial."
+        if (result.budget_exhausted or result.cancelled) and result.verdict == Verdict.APPROVE:
+            # Not everything was reviewed, so silence is not approval.
+            result.verdict = Verdict.COMMENT
+        # After the flags, so a replayed trace knows the review was partial.
         emit("result", result=result.model_dump(mode="json"))
         extra.update(
             verdict=result.verdict.value,
             kept=len(result.findings),
             dropped=len(result.dropped),
             tokens=budgeted.tokens_used,
-        )
-    if budgeted.exhausted:
-        result.budget_exhausted = True
-        result.summary += (
-            f" Budget exhausted ({budgeted.tokens_used} tokens): this review is partial."
         )
     return result
