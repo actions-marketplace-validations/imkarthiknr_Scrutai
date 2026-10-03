@@ -6,7 +6,7 @@
 *Every finding survives scrutiny, or it doesn't ship.*
 
 [![CI](https://github.com/imkarthiknr/Scrutai/actions/workflows/ci.yml/badge.svg)](https://github.com/imkarthiknr/Scrutai/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-0.3.0-6d4aff)
+![version](https://img.shields.io/badge/version-0.4.0-6d4aff)
 ![python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 ![status](https://img.shields.io/badge/status-beta-yellow)
@@ -15,6 +15,7 @@
 [How it works](#how-it-works) ·
 [GitHub Action](#use-it-on-every-pull-request) ·
 [Agent theater](#watch-it-think-the-agent-theater) ·
+[MCP server](docs/MCP.md) ·
 [Configuration](#configuration-reference) ·
 [Benchmark](#benchmark) ·
 [Contributing](DEVELOPMENT.md) ·
@@ -36,6 +37,7 @@
   - [Review a branch, a patch or a PR](#review-a-branch-a-patch-or-a-pr)
   - [Use it on every pull request](#use-it-on-every-pull-request)
   - [Watch it think: the agent theater](#watch-it-think-the-agent-theater)
+  - [Ask for it from your AI assistant: the MCP server](#ask-for-it-from-your-ai-assistant-the-mcp-server)
   - [Measure it: the benchmark](#measure-it-the-benchmark)
   - [Use it as a library](#use-it-as-a-library)
 - [Running with a real model](#running-with-a-real-model)
@@ -83,6 +85,7 @@ critic has to earn its tokens.
 | 🧭 **Smart routing** | A docs-only change wakes nobody; security only wakes on risky code or sensitive paths. Optional LLM router that can only *narrow* the selection. |
 | 🛡️ **Semgrep built in** | Runs when installed; a bundled offline ruleset needs no network. A rule firing on the exact line is the strongest evidence a finding can carry. |
 | 🐙 **GitHub Action** | One summary comment edited in place, plus inline comments that are never re-posted across pushes. SARIF output for GitHub code scanning. |
+| 🤖 **MCP server** | `scrutai mcp` gives Claude Code, Claude Desktop, Cursor and other MCP clients review, explain and benchmark tools, over stdio or authenticated HTTP. It posts to a PR only after the user confirms. |
 | 🎭 **Agent theater** | A React UI that shows a review live (or replays a recording): the agent graph, and a trial board following each finding from raised to upheld or killed. |
 | 📏 **Benchmark harness** | 50 labelled cases including deliberate traps; precision, recall, clean-diff false-positive rate and the critic's lift; usable as a CI gate. |
 | 💸 **Cost guardrails** | Per-review token and dollar caps; partial reviews are flagged, and nothing unjudged ships. |
@@ -143,6 +146,7 @@ pip install "scrutai[web,semgrep] @ git+https://github.com/imkarthiknr/Scrutai.g
 |---|---|---|
 | `web` | FastAPI, Uvicorn | the agent theater (`scrutai serve`) |
 | `semgrep` | Semgrep | SAST evidence for the security agent |
+| `mcp` | MCP Python SDK | the MCP server (`scrutai mcp`) |
 | `crewai` | CrewAI | the CrewAI framework backend |
 | `otel` | OpenTelemetry API + SDK | `tracing: otel` |
 | `langfuse` | Langfuse | `tracing: langfuse` |
@@ -150,7 +154,7 @@ pip install "scrutai[web,semgrep] @ git+https://github.com/imkarthiknr/Scrutai.g
 
 ## Usage
 
-Scrutai has three commands: `review`, `serve` and `eval`. Run any of them with `--help`.
+Scrutai has four commands: `review`, `serve`, `mcp` and `eval`. Run any of them with `--help`.
 
 ### Review a branch, a patch or a PR
 
@@ -264,6 +268,35 @@ Start a review from the browser (demo, git range, pasted patch or PR number) and
 The server binds to `127.0.0.1` by default because it can read your repository and spend your API
 budget. The built UI ships inside the Python package; Node is only needed to work on the UI.
 
+### Ask for it from your AI assistant: the MCP server
+
+```bash
+pip install -e ".[mcp]"
+claude mcp add scrutai -- scrutai mcp --root "$PWD"     # Claude Code, local (stdio)
+
+# Remote, over Streamable HTTP with a bearer token:
+SCRUTAI_MCP_TOKEN=... scrutai mcp --transport http --port 8000 --root ~/src
+```
+
+Then ask your assistant to *"review my branch against main with Scrutai"*. Your MCP client gets
+these tools:
+
+- **Review:** `review_git_range`, `review_patch` and `review_pull_request`.
+- **Results:** `get_review`, `list_reviews` and `explain_finding`. `explain_finding` returns the
+  critic's challenge, the specialist's defense and the code around the line.
+- **Posting:** `post_review` writes to the PR only after the user confirms, and is off with
+  `--no-post`.
+- **Benchmark:** `run_benchmark`.
+
+Every tool returns structured results. The server also provides:
+
+- **Resources:** the Markdown report, SARIF and trace of every review.
+- **Prompts:** `review-my-branch`, `fix-finding` and `security-audit`.
+
+Reviews report progress and can be cancelled. Repository paths are confined to `--root`. HTTP
+binds to localhost unless a token is set. See **[docs/MCP.md](docs/MCP.md)** for client configs,
+every tool's schema and the security model.
+
 ### Measure it: the benchmark
 
 ```bash
@@ -305,7 +338,7 @@ for f in result.findings:
 ```
 
 `ReviewResult` is a Pydantic model: `verdict`, `findings`, `dropped`, `summary`, `tokens_used`,
-`cost_usd`, `rounds`, `agents`, `budget_exhausted`.
+`cost_usd`, `rounds`, `agents`, `budget_exhausted`, `cancelled`.
 
 ## Running with a real model
 
@@ -465,6 +498,13 @@ product:
 - **No telemetry.** Scrutai sends nothing anywhere except to the model provider you configure.
   CrewAI's telemetry is disabled when the CrewAI backend is used.
 - **The theater binds to localhost** and warns if you bind it anywhere else.
+- **The MCP server trusts no client argument.**
+  - Repository paths must resolve inside a `--root`.
+  - Over HTTP it needs a bearer token whenever it listens beyond localhost, checks `Host` headers,
+    and caps input sizes.
+  - Posting to GitHub is a separate tool, gated on the user's confirmation.
+
+  See [docs/MCP.md](docs/MCP.md#security-model).
 - **Mock mode sends nothing at all.**
 
 Found a vulnerability? Please report it privately through
@@ -476,7 +516,7 @@ rather than in a public issue.
 ```text
 Scrutai/
 ├── src/scrutai/
-│   ├── cli.py              # review / serve / eval commands
+│   ├── cli.py              # review / serve / mcp / eval commands
 │   ├── orchestrator.py     # the LangGraph review graph: route → specialists → critic ⇄ defend → verdict
 │   ├── router.py           # which specialists a diff (chunk) needs
 │   ├── agents/             # the five specialists, their shared ReAct base, the CrewAI backend
@@ -488,14 +528,16 @@ Scrutai/
 │   ├── github.py           # PR diffs and idempotent PR reviews
 │   ├── trace.py            # JSONL / OpenTelemetry / Langfuse tracing
 │   ├── eval/harness.py     # the benchmark
+│   ├── inputs.py, runs.py  # one input path and run store shared by CLI, web and MCP
+│   ├── mcp/                # `scrutai mcp`: tools, resources, prompts, HTTP auth
 │   ├── web/                # `scrutai serve` and the built UI bundle
 │   └── rules/semgrep.yml   # the bundled offline Semgrep ruleset
 ├── web/                    # the React + TypeScript source of the agent theater
-├── tests/                  # 150+ tests, including browser end-to-end tests
+├── tests/                  # 200+ tests, including browser and MCP end-to-end tests
 ├── benchmark/cases.jsonl   # the labelled benchmark
 ├── action.yml              # the GitHub Action
-├── examples/               # a ready-to-copy workflow
-└── docs/ARCHITECTURE.md    # design rationale
+├── examples/               # a ready-to-copy workflow and MCP client configs
+└── docs/                   # ARCHITECTURE.md (design rationale), MCP.md (MCP server reference)
 ```
 
 ## FAQ
@@ -520,6 +562,10 @@ Yes. `review` exits `1` on a finding at or above `fail_on`, and the Action fails
 No. The summary comment is edited in place, and inline comments carry fingerprints, so a finding
 is posted once, even if the code around it moves.
 
+**Can I use it from Claude Code, Claude Desktop or Cursor?**
+Yes, through the MCP server: `claude mcp add scrutai -- scrutai mcp --root "$PWD"`. See
+[docs/MCP.md](docs/MCP.md) for other clients and remote (HTTP) setups.
+
 **Can I use a different agent framework?**
 Yes. Specialists share one seam, `Specialist._loop`. The CrewAI backend overrides only that, and
 `scrutai eval --compare crewai` shows identical results on the benchmark. See
@@ -531,6 +577,8 @@ Yes. Specialists share one seam, `Specialist._loop`. The CrewAI backend override
 - ✅ **v0.2:** GitHub Action, SARIF, Semgrep, Performance and Style agents, chunked parallel review,
   budget guardrails, tracing.
 - ✅ **v0.3:** agent theater web UI, CrewAI backend, `eval --compare`.
+- ✅ **v0.4:** MCP server: review, explain, post and benchmark tools for AI assistants, over stdio
+  or authenticated HTTP.
 - 🔜 **Next:** published live-model benchmark numbers, a Google ADK backend, Semgrep taint rules for
   data-flow issues, a PyPI release.
 

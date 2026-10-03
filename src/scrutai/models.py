@@ -196,6 +196,8 @@ class ReviewResult(BaseModel):
     dropped: list[Finding] = Field(default_factory=list)
     # The token/cost budget ran out; some agents or judgements were skipped.
     budget_exhausted: bool = False
+    # The caller cancelled the review; like a budget stop, the result is partial.
+    cancelled: bool = False
 
     def by_severity(self) -> dict[str, int]:
         counts: dict[str, int] = {}

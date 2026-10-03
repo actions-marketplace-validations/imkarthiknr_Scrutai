@@ -4,12 +4,12 @@ scrutai review --base main                # review working branch vs main
 scrutai review --demo                     # run on the bundled sample diff
 scrutai review --diff pr.patch -f sarif   # review a patch file, emit SARIF
 scrutai eval --min-precision 0.9          # run the benchmark as a CI gate
+scrutai mcp --transport http --root ~/src  # serve reviews to MCP clients
 """
 
 from __future__ import annotations
 
 import json
-import os
 from enum import StrEnum
 from pathlib import Path
 
@@ -19,9 +19,9 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from .config import ScrutaiConfig
-from .demo import review_demo
-from .diff import DiffError, apply_filters, diff_from_file, diff_from_git, parse_diff
-from .github import GitHubClient, GitHubError, PullRequest, detect_repo, publish
+from .diff import DiffError
+from .github import GitHubError, publish
+from .inputs import Source, prepare
 from .llm import make_client
 from .models import ReviewResult
 from .orchestrator import review_diff
@@ -131,40 +131,32 @@ def review(
     if post and pr is None:
         console.print("[red]--post needs --pr[/red]")
         raise typer.Exit(code=2)
-    gh: tuple[GitHubClient, PullRequest] | None = None
     tracer = _make_tracer(config, trace)
     if demo:
-        result = review_demo(config, tracer)
+        source = Source(kind="demo")
+    elif pr is not None:
+        source = Source(kind="pr", pr=pr, github_repo=github_repo or "")
+    elif diff_file:
+        source = Source(kind="file", path=diff_file)
     else:
-        try:
-            if pr is not None:
-                client = GitHubClient(
-                    os.environ.get("GITHUB_TOKEN", ""),
-                    github_repo or detect_repo(repo),
-                    os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        source = Source(kind="git", base=base, head=head)
+    try:
+        with prepare(source, config, repo) as prepared:
+            result = review_diff(prepared.diff, config, make_client(config.llm_mode), tracer)
+            if post and prepared.github is not None and prepared.pull is not None:
+                try:
+                    rep = publish(prepared.github, prepared.pull, result, prepared.diff)
+                except GitHubError as exc:
+                    console.print(f"[red]Could not post review:[/red] {exc}")
+                    raise typer.Exit(code=2) from exc
+                console.print(
+                    f"[dim]PR #{pr}: summary {rep.summary}, {rep.posted} new inline "
+                    f"comment(s), {rep.skipped_duplicates} already posted, "
+                    f"{rep.skipped_off_diff} off-diff.[/dim]"
                 )
-                pull = client.pull_request(pr)
-                diff = parse_diff(client.pull_request_diff(pr), repo_root=repo, head=pull.head_sha)
-                gh = (client, pull)
-            elif diff_file:
-                diff = diff_from_file(diff_file, repo_root=repo)
-            else:
-                diff = diff_from_git(base, head, repo)
-        except (DiffError, GitHubError) as exc:
-            console.print(f"[red]Could not build diff:[/red] {exc}")
-            raise typer.Exit(code=2) from exc
-        diff = apply_filters(diff, config.include, config.exclude)
-        result = review_diff(diff, config, make_client(config.llm_mode), tracer)
-        if gh is not None and post:
-            try:
-                rep = publish(gh[0], gh[1], result, diff)
-            except GitHubError as exc:
-                console.print(f"[red]Could not post review:[/red] {exc}")
-                raise typer.Exit(code=2) from exc
-            console.print(
-                f"[dim]PR #{pr}: summary {rep.summary}, {rep.posted} new inline comment(s), "
-                f"{rep.skipped_duplicates} already posted, {rep.skipped_off_diff} off-diff.[/dim]"
-            )
+    except (DiffError, GitHubError) as exc:
+        console.print(f"[red]Could not build diff:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
 
     if tracer is not None:
         tracer.close()
@@ -198,7 +190,8 @@ def serve(
     try:
         import uvicorn
 
-        from .web.server import Run, RunStore, create_app, load_trace
+        from .runs import Run, RunStore, load_trace
+        from .web.server import create_app
     except ImportError as exc:
         console.print('[red]The web UI needs extras:[/red] pip install "scrutai[web]"')
         raise typer.Exit(code=2) from exc
@@ -221,6 +214,73 @@ def serve(
         )
     console.print(f"Scrutai theater on [bold]http://{host}:{port}[/bold]  (Ctrl+C to stop)")
     uvicorn.run(create_app(config_path, repo, store), host=host, port=port, log_level="warning")
+
+
+class Transport(StrEnum):
+    stdio = "stdio"
+    http = "http"
+
+
+@app.command("mcp")
+def mcp_cmd(
+    transport: Transport = typer.Option(Transport.stdio, help="stdio (local) or http (remote)."),
+    host: str = typer.Option("127.0.0.1", help="HTTP: interface to bind."),
+    port: int = typer.Option(8000, help="HTTP: port. The endpoint is /mcp."),
+    root: list[str] = typer.Option(
+        [], "--root", help="Directory tools may read (repeatable; default: the current one)."
+    ),
+    allowed_host: list[str] = typer.Option(
+        [], "--allowed-host", help="HTTP: extra Host header to accept, e.g. a proxy's name."
+    ),
+    max_concurrent: int = typer.Option(2, help="Reviews allowed to run at once."),
+    no_post: bool = typer.Option(
+        False, "--no-post", help="Do not offer post_review: the server never writes to GitHub."
+    ),
+    benchmark: str = typer.Option(
+        "benchmark/cases.jsonl", help="Labelled cases for the run_benchmark tool."
+    ),
+    config_path: str = typer.Option(".scrutai.yml", "--config"),
+) -> None:
+    """Serve Scrutai over the Model Context Protocol (Claude Code, Claude Desktop, Cursor...).
+
+    Over HTTP, set SCRUTAI_MCP_TOKEN to require a bearer token; it is mandatory
+    when binding beyond localhost.
+    """
+    _load_config(config_path)  # fail fast on a bad config
+    try:
+        from .mcp.security import SecurityError
+        from .mcp.server import Settings, http_application, run_stdio
+    except ImportError as exc:
+        console.print('[red]The MCP server needs an extra:[/red] pip install "scrutai[mcp]"')
+        raise typer.Exit(code=2) from exc
+
+    err = Console(stderr=True)  # stdout carries the protocol on stdio
+    settings = Settings(
+        config_path=config_path,
+        roots=root or ["."],
+        max_concurrent=max_concurrent,
+        allow_post=not no_post,
+        benchmark=benchmark,
+    )
+    try:
+        if transport is Transport.stdio:
+            run_stdio(settings)
+            return
+        app_ = http_application(settings, host, port, allowed_host)
+    except SecurityError as exc:
+        err.print(f"[red]Refusing to start:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    import uvicorn
+
+    if host in ("0.0.0.0", "::") and not allowed_host:
+        err.print(
+            "[yellow]Note:[/yellow] only localhost Host headers are accepted; add "
+            "--allowed-host NAME for each name remote clients use to reach this server."
+        )
+    auth = "bearer token required" if app_.expected else "no auth (localhost only)"
+    err.print(f"Scrutai MCP on [bold]http://{host}:{port}/mcp[/bold]  ({auth}; Ctrl+C to stop)")
+    uvicorn.run(app_, host=host, port=port, log_level="warning")
 
 
 @app.command("eval")

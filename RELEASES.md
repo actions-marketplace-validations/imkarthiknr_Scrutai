@@ -6,7 +6,8 @@ behaviour; such changes are listed under **Changed**, with upgrade notes.
 
 | Version | Date | Theme | Status |
 |---|---|---|---|
-| [0.3.0](#030) | 2026-10-02 | See it work, swap the framework | **Current** |
+| [0.4.0](#040) | 2026-10-03 | Ask for a review from any AI assistant | **Current** |
+| [0.3.0](#030) | 2026-10-02 | See it work, swap the framework | Superseded |
 | [0.2.0](#020) | 2026-10-01 | Ready for real pull requests | Superseded |
 | [0.1.0](#010) | 2026-10-01 | The reviewing engine | Superseded |
 | [0.0.0](#000-skeleton) | 2026-10-01 | Initial skeleton | Historical |
@@ -16,39 +17,106 @@ Scrutai is not on PyPI yet. Install any version from GitHub, e.g.
 
 ## Feature matrix
 
-| Feature | 0.1 | 0.2 | 0.3 |
-|---|:-:|:-:|:-:|
-| Diff parsing with real line numbers, include/exclude globs | ✅ | ✅ | ✅ |
-| Routing (docs-only changes wake nobody) and optional LLM router | ✅ | ✅ | ✅ |
-| ReAct specialists over sandboxed tools (`read_file`, `grep`, `git_blame`) | ✅ | ✅ | ✅ |
-| Security, Correctness and Tests specialists | ✅ | ✅ | ✅ |
-| Performance and Style specialists | | ✅ | ✅ |
-| Adversarial critic: uphold / downgrade / kill / challenge | ✅ | ✅ | ✅ |
-| Debate: specialists defend or withdraw challenged findings | ✅ | ✅ | ✅ |
-| Unjudged findings withheld, never shipped | | ✅ | ✅ |
-| Benchmark harness with critic ablation | ✅ (38 cases) | ✅ (50 cases) | ✅ (50 cases) |
-| Semgrep evidence, bundled offline ruleset | | ✅ | ✅ |
-| Concurrent fan-out (LangGraph `Send`) | | ✅ | ✅ |
-| Chunked review with per-chunk routing | | ✅ | ✅ |
-| Token and dollar budget guardrails | | ✅ | ✅ |
-| Output: table, JSON, Markdown, SARIF | table, JSON | ✅ | ✅ |
-| `review --pr`, `--diff FILE` / stdin | `--diff` | ✅ | ✅ |
-| GitHub Action with idempotent PR comments | | ✅ | ✅ |
-| Tracing: JSONL, OpenTelemetry, Langfuse | | ✅ | ✅ |
-| Live trace events (run ids, start/end spans, findings, decisions) | | | ✅ |
-| Agent theater web UI (`scrutai serve`), live and replay | | | ✅ |
-| CrewAI backend, `eval --compare` | | | ✅ |
-| `grep` works without ripgrep, outside git repositories | | | ✅ |
+| Feature | 0.1 | 0.2 | 0.3 | 0.4 |
+|---|:-:|:-:|:-:|:-:|
+| Diff parsing with real line numbers, include/exclude globs | ✅ | ✅ | ✅ | ✅ |
+| Routing (docs-only changes wake nobody) and optional LLM router | ✅ | ✅ | ✅ | ✅ |
+| ReAct specialists over sandboxed tools (`read_file`, `grep`, `git_blame`) | ✅ | ✅ | ✅ | ✅ |
+| Security, Correctness and Tests specialists | ✅ | ✅ | ✅ | ✅ |
+| Performance and Style specialists | | ✅ | ✅ | ✅ |
+| Adversarial critic: uphold / downgrade / kill / challenge | ✅ | ✅ | ✅ | ✅ |
+| Debate: specialists defend or withdraw challenged findings | ✅ | ✅ | ✅ | ✅ |
+| Unjudged findings withheld, never shipped | | ✅ | ✅ | ✅ |
+| Benchmark harness with critic ablation | ✅ (38 cases) | ✅ (50 cases) | ✅ (50 cases) | ✅ (50 cases) |
+| Semgrep evidence, bundled offline ruleset | | ✅ | ✅ | ✅ |
+| Concurrent fan-out (LangGraph `Send`) | | ✅ | ✅ | ✅ |
+| Chunked review with per-chunk routing | | ✅ | ✅ | ✅ |
+| Token and dollar budget guardrails | | ✅ | ✅ | ✅ |
+| Output: table, JSON, Markdown, SARIF | table, JSON | ✅ | ✅ | ✅ |
+| `review --pr`, `--diff FILE` / stdin | `--diff` | ✅ | ✅ | ✅ |
+| GitHub Action with idempotent PR comments | | ✅ | ✅ | ✅ |
+| Tracing: JSONL, OpenTelemetry, Langfuse | | ✅ | ✅ | ✅ |
+| Live trace events (run ids, start/end spans, findings, decisions) | | | ✅ | ✅ |
+| Agent theater web UI (`scrutai serve`), live and replay | | | ✅ | ✅ |
+| CrewAI backend, `eval --compare` | | | ✅ | ✅ |
+| `grep` works without ripgrep, outside git repositories | | | ✅ | ✅ |
+| MCP server over stdio and authenticated Streamable HTTP | | | | ✅ |
+| MCP tools (review, results, explain, benchmark), resources and prompts | | | | ✅ |
+| Post to a PR from an assistant, confirmed by the user | | | | ✅ |
+| Review cancellation (partial result, nothing unjudged) | | | | ✅ |
 
 ---
 
 ## Unreleased
 
-Changes on `main` that are not in a tagged version yet.
+Changes on `main` that are not in a tagged version yet. Nothing yet.
+
+---
+
+## 0.4.0
+
+**Released 2026-10-03 · "Ask for a review from any AI assistant"**
+
+v0.4 turns Scrutai into an MCP server. Claude Code, Claude Desktop, Cursor and any other MCP client
+can review a change, dig into a finding and, with the user's approval, post the review to the
+pull request. The engine is the same one the CLI, the Action and the web UI use.
+
+### Highlights
+- **`scrutai mcp`** speaks MCP over **stdio** (local clients launch it) or **Streamable HTTP**
+  (remote clients). Off localhost, HTTP requires a bearer token, and it checks `Host` headers
+  against DNS rebinding.
+- **Review and result tools:**
+  - review a git range, a patch or a GitHub pull request;
+  - list, fetch and explain results, including the critic's challenge, the specialist's defense
+    and the code around the line;
+  - run the benchmark.
+  Every tool returns structured output, and reviews report live progress and can be cancelled.
+- **Posting is opt-in twice over:** a separate destructive `post_review` tool that asks the user
+  first, and that `--no-post` removes entirely.
+- **Works with MCP Python SDK 1.28+ and 2.x**, including the 2026-07-28 protocol's input-required
+  round trips. CI runs the MCP tests on both.
+
+### Added
+- `scrutai mcp [--transport stdio|http] [--host] [--port] [--root]... [--allowed-host]...
+  [--max-concurrent] [--no-post] [--benchmark] [--config]`. Extra: `scrutai[mcp]`.
+- **Tools:**
+  - `review_patch`, `review_git_range`, `review_pull_request` (all take `wait=false` to return a
+    `review_id` at once);
+  - `get_review`, `list_reviews`, `explain_finding`;
+  - `post_review`;
+  - `run_benchmark` (`compare_backend`, `limit`).
+- **Resources:** `scrutai://reviews/{id}` (JSON) plus `/report.md`, `/sarif` and `/trace`;
+  `scrutai://agents`; `scrutai://config` (secrets redacted).
+- **Prompts:** `review-my-branch`, `fix-finding`, `security-audit`.
+- **Security for MCP clients:**
+  - repository paths are confined to `--root` (symlinks resolved);
+  - patch, file-count and diff-size caps;
+  - the HTTP token is read from `SCRUTAI_MCP_TOKEN` only, must be 16+ characters, and is
+    compared in constant time;
+  - in-progress reviews are capped.
+- **Library hooks:**
+  - `review_diff(..., cancel=threading.Event())` and `CancellableClient`;
+  - `ReviewResult.cancelled`;
+  - `scrutai.progress.ProgressListener` (trace events → progress);
+  - `scrutai.inputs.prepare(Source)`: one input path for every front end;
+  - `scrutai.runs.RunStore`, shared by the web and MCP servers;
+  - `eval.harness.run_benchmark(..., on_case=, limit=)`.
+- `docs/MCP.md` (reference) and `examples/mcp/` (Claude Code, Claude Desktop and Cursor configs).
+
+### Changed
+- **A partial review (out of budget or cancelled) is never an approval:** its verdict is at most
+  `comment`.
+- The trace's `result` event is emitted after the budget and cancellation flags are set, so it
+  reports them correctly.
 
 ### Documentation
 - A full README rewrite, `DEVELOPMENT.md` (the contributor guide) and this `RELEASES.md`, which
-  replaces `CHANGELOG.md`.
+  replaces `CHANGELOG.md`. DEVELOPMENT.md gains an "Add an MCP tool" recipe.
+
+### Upgrade notes
+- No breaking changes for the CLI, the Action or configs.
+- If you call `review_diff()` directly, `cancel` is a new optional keyword; results gain a
+  `cancelled` field.
 
 ---
 

@@ -32,6 +32,22 @@ jobs:
         if: always()
         run: test -f eval-report.md && cat eval-report.md >> "$GITHUB_STEP_SUMMARY" || true
 
+  mcp-v2:
+    # The main job tests the MCP server on SDK 1.x (CrewAI pins mcp~=1.28);
+    # this one runs the same tests on 2.x, without CrewAI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e . "mcp>=2" pytest httpx pyyaml
+      - name: Check the SDK major
+        run: uv run --no-sync python -c "from scrutai.mcp.compat import MCP_MAJOR; assert MCP_MAJOR == 2, MCP_MAJOR"
+      - name: MCP tests on mcp 2.x
+        run: uv run --no-sync pytest -q tests/test_mcp_server.py tests/test_mcp_transports.py tests/test_mcp_github.py tests/test_mcp_benchmark.py tests/test_mcp_prompts.py
+
   web:
     runs-on: ubuntu-latest
     defaults:

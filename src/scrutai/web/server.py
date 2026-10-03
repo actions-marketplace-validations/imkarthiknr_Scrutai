@@ -20,13 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import threading
-import time
 import uuid
-from collections import OrderedDict
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -36,84 +32,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..config import ScrutaiConfig
-from ..demo import review_demo
-from ..diff import DiffError, apply_filters, diff_from_git, parse_diff
-from ..github import GitHubClient, GitHubError, detect_repo
+from ..diff import DiffError
+from ..github import GitHubError
+from ..inputs import Source, prepare
 from ..llm import make_client
 from ..orchestrator import review_diff
+from ..runs import Run, RunNotFound, RunStore, load_trace
 from ..trace import Tracer
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-MAX_EVENTS_PER_RUN = 50_000
-MAX_RUNS = 50
-
-
-@dataclass
-class Run:
-    id: str
-    source: str
-    label: str
-    created: float = field(default_factory=time.time)
-    status: Literal["running", "done", "error"] = "running"
-    error: str | None = None
-    events: list[dict[str, Any]] = field(default_factory=list)
-    truncated: bool = False
-    lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def append(self, event: dict[str, Any]) -> None:
-        with self.lock:
-            if len(self.events) >= MAX_EVENTS_PER_RUN:
-                self.truncated = True
-                return
-            self.events.append(event)
-
-    def since(self, index: int) -> list[dict[str, Any]]:
-        with self.lock:
-            return self.events[index:]
-
-    def summary(self) -> dict[str, Any]:
-        result = next((e["result"] for e in reversed(self.events) if e["kind"] == "result"), None)
-        return {
-            "id": self.id,
-            "source": self.source,
-            "label": self.label,
-            "created": self.created,
-            "status": self.status,
-            "error": self.error,
-            "events": len(self.events),
-            "truncated": self.truncated,
-            "verdict": result["verdict"] if result else None,
-            "result": result,
-        }
-
-
-class RunStore:
-    """In-memory runs, oldest finished ones evicted beyond MAX_RUNS."""
-
-    def __init__(self) -> None:
-        self._runs: OrderedDict[str, Run] = OrderedDict()
-        self._lock = threading.Lock()
-
-    def add(self, run: Run) -> Run:
-        with self._lock:
-            self._runs[run.id] = run
-            while len(self._runs) > MAX_RUNS:
-                oldest = next((k for k, r in self._runs.items() if r.status != "running"), None)
-                if oldest is None:
-                    break
-                del self._runs[oldest]
-        return run
-
-    def get(self, run_id: str) -> Run:
-        with self._lock:
-            run = self._runs.get(run_id)
-        if run is None:
-            raise HTTPException(404, f"no run {run_id!r}")
-        return run
-
-    def all(self) -> list[Run]:
-        with self._lock:
-            return list(reversed(self._runs.values()))
 
 
 class RunRequest(BaseModel):
@@ -125,29 +52,7 @@ class RunRequest(BaseModel):
 
 
 def _label(req: RunRequest) -> str:
-    return {
-        "demo": "Demo: app/runner.py",
-        "git": f"{req.base}...{req.head}",
-        "patch": "Pasted patch",
-        "pr": f"PR #{req.pr}",
-    }[req.source]
-
-
-def load_trace(text: str) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for n, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"line {n}: not JSON") from exc
-        if not isinstance(event, dict) or "kind" not in event:
-            raise ValueError(f"line {n}: not a Scrutai trace event")
-        events.append(event)
-    if not events:
-        raise ValueError("empty trace")
-    return events
+    return Source(kind=req.source, base=req.base, head=req.head, pr=int(req.pr or 0)).label()
 
 
 def create_app(
@@ -159,24 +64,17 @@ def create_app(
 
     def execute(run: Run, req: RunRequest) -> None:
         tracer = Tracer(listeners=[run.append], run_id=run.id)
+        source = Source(
+            kind=req.source,
+            base=req.base,
+            head=req.head,
+            patch=req.patch or "",
+            pr=int(req.pr or 0),
+        )
         try:
             config = ScrutaiConfig.load(config_path)
-            if req.source == "demo":
-                review_demo(config, tracer)
-                return
-            if req.source == "git":
-                diff = diff_from_git(req.base, req.head, repo)
-            elif req.source == "patch":
-                diff = parse_diff(req.patch or "", repo_root=repo)
-            else:
-                client = GitHubClient(
-                    os.environ.get("GITHUB_TOKEN", ""),
-                    detect_repo(repo),
-                    os.environ.get("GITHUB_API_URL", "https://api.github.com"),
-                )
-                diff = parse_diff(client.pull_request_diff(int(req.pr or 0)), repo_root=repo)
-            diff = apply_filters(diff, config.include, config.exclude)
-            review_diff(diff, config, make_client(config.llm_mode), tracer)
+            with prepare(source, config, repo) as prepared:
+                review_diff(prepared.diff, config, make_client(config.llm_mode), tracer)
         except (DiffError, GitHubError, ValueError, OSError) as exc:
             run.error = str(exc)
             run.status = "error"
@@ -188,6 +86,12 @@ def create_app(
         finally:
             if run.status == "running":
                 run.status = "done"
+
+    def _get(run_id: str) -> Run:
+        try:
+            return runs.get(run_id)
+        except RunNotFound as exc:
+            raise HTTPException(404, f"no run {run_id!r}") from exc
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -210,11 +114,11 @@ def create_app(
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, Any]:
-        return runs.get(run_id).summary()
+        return _get(run_id).summary()
 
     @app.get("/api/runs/{run_id}/events")
     async def stream(run_id: str, request: Request) -> StreamingResponse:
-        run = runs.get(run_id)
+        run = _get(run_id)
         last = request.headers.get("last-event-id", "")
         start = int(last) if last.isdigit() else 0
 

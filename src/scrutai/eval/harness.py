@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import tempfile
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -178,14 +179,27 @@ def summarize(results: list[CaseResult]) -> dict[str, Any]:
     }
 
 
+# (cases done, cases in total, id of the case just finished); may raise to stop early.
+CaseCallback = Callable[[int, int, str], None]
+
+
 def run_benchmark(
-    path: str | Path, config: ScrutaiConfig, details: list[CaseResult] | None = None
+    path: str | Path,
+    config: ScrutaiConfig,
+    details: list[CaseResult] | None = None,
+    on_case: CaseCallback | None = None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
-    """Run every case and return aggregate metrics.
+    """Run every case (or the first `limit`) and return aggregate metrics.
 
     Pass a list as `details` to also collect the per-case results.
     """
-    results = [run_case(c, config) for c in load_cases(path)]
+    cases = load_cases(path)[:limit] if limit else load_cases(path)
+    results: list[CaseResult] = []
+    for case in cases:
+        results.append(run_case(case, config))
+        if on_case:
+            on_case(len(results), len(cases), case.id)
     if details is not None:
         details.extend(results)
     return summarize(results)
@@ -234,7 +248,11 @@ def markdown_report(metrics: dict[str, Any], results: list[CaseResult]) -> str:
 
 
 def compare_backends(
-    path: str | Path, config: ScrutaiConfig, backends: list[str]
+    path: str | Path,
+    config: ScrutaiConfig,
+    backends: list[str],
+    on_case: CaseCallback | None = None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     """Run the same benchmark with every specialist on each framework backend.
 
@@ -245,11 +263,16 @@ def compare_backends(
 
     runs: dict[str, dict[str, Any]] = {}
     reported: dict[str, list[list[str]]] = {}
-    for backend in backends:
+    for i, backend in enumerate(backends):
         cfg = config.model_copy(update={"backends": {"*": backend}})
         details: list[CaseResult] = []
         start = time.perf_counter()
-        metrics = run_benchmark(path, cfg, details)
+
+        def progress(done: int, total: int, case: str, i: int = i, backend: str = backend) -> None:
+            if on_case:
+                on_case(i * total + done, len(backends) * total, f"{backend}: {case}")
+
+        metrics = run_benchmark(path, cfg, details, progress, limit)
         metrics["seconds"] = round(time.perf_counter() - start, 2)
         runs[backend] = metrics
         reported[backend] = [sorted(r.reported) for r in details]

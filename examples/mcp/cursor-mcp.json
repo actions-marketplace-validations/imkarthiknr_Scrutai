@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "scrutai": {
+      "command": "/path/to/venv/bin/scrutai",
+      "args": ["mcp", "--root", "/path/to/your/repo", "--no-post"]
+    },
+    "scrutai-remote": {
+      "url": "https://scrutai.example.com/mcp",
+      "headers": { "Authorization": "Bearer <your SCRUTAI_MCP_TOKEN>" }
+    }
+  }
+}
