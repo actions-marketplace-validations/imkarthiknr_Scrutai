@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ["fake_github"]  # the `github` fixture: a fake GitHub REST API
+
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(

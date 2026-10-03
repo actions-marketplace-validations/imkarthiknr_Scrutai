@@ -12,17 +12,31 @@ from scrutai.mcp.compat import MCP_MAJOR
 
 
 @contextlib.asynccontextmanager
-async def in_memory(server: Any) -> AsyncIterator[Any]:
-    """A client connected to `server` in-process."""
+async def in_memory(server: Any, elicit: Any = None) -> AsyncIterator[Any]:
+    """A client connected to `server` in-process.
+
+    `elicit`, if given, answers the server's elicitation requests:
+    `(message) -> dict | None` (None declines).
+    """
+    callback = None
+    if elicit is not None:
+        from mcp.types import ElicitResult
+
+        async def callback(context: Any, params: Any) -> Any:
+            answer = elicit(params.message)
+            if answer is None:
+                return ElicitResult(action="decline")
+            return ElicitResult(action="accept", content=answer)
+
     if MCP_MAJOR == 2:
         from mcp import Client  # type: ignore[attr-defined]
 
-        async with Client(server) as client:
+        async with Client(server, elicitation_callback=callback) as client:
             yield client
     else:
         from mcp.shared.memory import create_connected_server_and_client_session as connect
 
-        async with connect(server._mcp_server) as client:
+        async with connect(server._mcp_server, elicitation_callback=callback) as client:
             yield client
 
 

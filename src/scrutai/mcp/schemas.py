@@ -143,3 +143,20 @@ class FindingExplanation(BaseModel):
     defense: str | None = Field(default=None, description="The specialist's answer.")
     history: list[str] = Field(description="The critic's decision in each round.")
     code: str = Field(description="The reviewed lines around the finding; '+' marks added lines.")
+
+
+class PostResult(BaseModel):
+    """What post_review did on GitHub."""
+
+    review_id: str
+    repo: str
+    pr: int
+    status: Literal["posted", "declined"] = Field(
+        default="declined", description="declined: the user said no; nothing was posted."
+    )
+    summary_comment: str | None = Field(default=None, description="created | updated")
+    posted: int = Field(default=0, description="New inline comments.")
+    skipped_duplicates: int = Field(default=0, description="Findings already on the PR.")
+    skipped_off_diff: int = Field(
+        default=0, description="Findings on lines GitHub can't comment on (summary only)."
+    )

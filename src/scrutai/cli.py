@@ -233,6 +233,9 @@ def mcp_cmd(
         [], "--allowed-host", help="HTTP: extra Host header to accept, e.g. a proxy's name."
     ),
     max_concurrent: int = typer.Option(2, help="Reviews allowed to run at once."),
+    no_post: bool = typer.Option(
+        False, "--no-post", help="Do not offer post_review: the server never writes to GitHub."
+    ),
     config_path: str = typer.Option(".scrutai.yml", "--config"),
 ) -> None:
     """Serve Scrutai over the Model Context Protocol (Claude Code, Claude Desktop, Cursor...).
@@ -249,7 +252,12 @@ def mcp_cmd(
         raise typer.Exit(code=2) from exc
 
     err = Console(stderr=True)  # stdout carries the protocol on stdio
-    settings = Settings(config_path=config_path, roots=root or ["."], max_concurrent=max_concurrent)
+    settings = Settings(
+        config_path=config_path,
+        roots=root or ["."],
+        max_concurrent=max_concurrent,
+        allow_post=not no_post,
+    )
     try:
         if transport is Transport.stdio:
             run_stdio(settings)
