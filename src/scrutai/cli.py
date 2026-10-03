@@ -4,6 +4,7 @@ scrutai review --base main                # review working branch vs main
 scrutai review --demo                     # run on the bundled sample diff
 scrutai review --diff pr.patch -f sarif   # review a patch file, emit SARIF
 scrutai eval --min-precision 0.9          # run the benchmark as a CI gate
+scrutai mcp --transport http --root ~/src  # serve reviews to MCP clients
 """
 
 from __future__ import annotations
@@ -213,6 +214,61 @@ def serve(
         )
     console.print(f"Scrutai theater on [bold]http://{host}:{port}[/bold]  (Ctrl+C to stop)")
     uvicorn.run(create_app(config_path, repo, store), host=host, port=port, log_level="warning")
+
+
+class Transport(StrEnum):
+    stdio = "stdio"
+    http = "http"
+
+
+@app.command("mcp")
+def mcp_cmd(
+    transport: Transport = typer.Option(Transport.stdio, help="stdio (local) or http (remote)."),
+    host: str = typer.Option("127.0.0.1", help="HTTP: interface to bind."),
+    port: int = typer.Option(8000, help="HTTP: port. The endpoint is /mcp."),
+    root: list[str] = typer.Option(
+        [], "--root", help="Directory tools may read (repeatable; default: the current one)."
+    ),
+    allowed_host: list[str] = typer.Option(
+        [], "--allowed-host", help="HTTP: extra Host header to accept, e.g. a proxy's name."
+    ),
+    max_concurrent: int = typer.Option(2, help="Reviews allowed to run at once."),
+    config_path: str = typer.Option(".scrutai.yml", "--config"),
+) -> None:
+    """Serve Scrutai over the Model Context Protocol (Claude Code, Claude Desktop, Cursor...).
+
+    Over HTTP, set SCRUTAI_MCP_TOKEN to require a bearer token; it is mandatory
+    when binding beyond localhost.
+    """
+    _load_config(config_path)  # fail fast on a bad config
+    try:
+        from .mcp.security import SecurityError
+        from .mcp.server import Settings, http_application, run_stdio
+    except ImportError as exc:
+        console.print('[red]The MCP server needs an extra:[/red] pip install "scrutai[mcp]"')
+        raise typer.Exit(code=2) from exc
+
+    err = Console(stderr=True)  # stdout carries the protocol on stdio
+    settings = Settings(config_path=config_path, roots=root or ["."], max_concurrent=max_concurrent)
+    try:
+        if transport is Transport.stdio:
+            run_stdio(settings)
+            return
+        app_ = http_application(settings, host, port, allowed_host)
+    except SecurityError as exc:
+        err.print(f"[red]Refusing to start:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    import uvicorn
+
+    if host in ("0.0.0.0", "::") and not allowed_host:
+        err.print(
+            "[yellow]Note:[/yellow] only localhost Host headers are accepted; add "
+            "--allowed-host NAME for each name remote clients use to reach this server."
+        )
+    auth = "bearer token required" if app_.expected else "no auth (localhost only)"
+    err.print(f"Scrutai MCP on [bold]http://{host}:{port}/mcp[/bold]  ({auth}; Ctrl+C to stop)")
+    uvicorn.run(app_, host=host, port=port, log_level="warning")
 
 
 @app.command("eval")
