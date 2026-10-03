@@ -107,6 +107,24 @@ def resource(server: Any, uri: str, **options: Any) -> Callable[[F], F]:
     return cast(Callable[[F], F], server.resource(uri, **options))
 
 
+def invalid_params(message: str) -> Exception:
+    """An error a prompt raises that reaches the client with its message.
+
+    mcp 2 replaces the text of any other exception with "Internal server error".
+    """
+    if MCP_MAJOR == 2:
+        import mcp.shared.exceptions as errors
+
+        mcp_error: Any = getattr(errors, "MCPError")  # noqa: B009 (absent in 1.x stubs)
+        return cast(Exception, mcp_error(-32602, message))  # JSON-RPC "invalid params"
+    return ValueError(message)
+
+
+def prompt(server: Any, **options: Any) -> Callable[[F], F]:
+    """`server.prompt(...)`, typed like `tool`."""
+    return cast(Callable[[F], F], server.prompt(**options))
+
+
 def new_server(name: str, instructions: str, security: TransportSecuritySettings) -> Any:
     """A server instance; `security` is only used by the HTTP transport."""
     if MCP_MAJOR == 2:
@@ -135,6 +153,8 @@ __all__ = [
     "ToolError",
     "TransportSecuritySettings",
     "http_app",
+    "invalid_params",
     "new_server",
+    "prompt",
     "resource",
 ]
