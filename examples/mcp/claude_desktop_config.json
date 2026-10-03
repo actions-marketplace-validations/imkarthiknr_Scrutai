@@ -8,6 +8,7 @@
         "--config", "/path/to/your/repo/.scrutai.yml"
       ],
       "env": {
+        "ANTHROPIC_API_KEY": "your own key; only for llm_mode: live (or GEMINI_API_KEY, OPENAI_API_KEY, ...)",
         "GITHUB_TOKEN": "only needed for review_pull_request / post_review"
       }
     }
