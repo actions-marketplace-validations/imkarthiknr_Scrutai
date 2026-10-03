@@ -9,11 +9,12 @@ from typing import Any
 import pytest
 from mcp_util import in_memory, is_error, structured, text
 
+from scrutai.eval.harness import BUNDLED_CASES
 from scrutai.mcp.server import Settings, build_server
 
 pytestmark = pytest.mark.anyio
 
-CASES = Path(__file__).resolve().parents[1] / "benchmark" / "cases.jsonl"
+CASES = BUNDLED_CASES
 
 
 @pytest.fixture

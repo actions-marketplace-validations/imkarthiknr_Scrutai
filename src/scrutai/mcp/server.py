@@ -32,6 +32,7 @@ from ..agents import BACKENDS, REGISTRY
 from ..config import ScrutaiConfig
 from ..diff import DiffError
 from ..eval.harness import (
+    BUNDLED_CASES,
     CaseCallback,
     CaseResult,
     compare_backends,
@@ -139,7 +140,7 @@ class Settings:
     max_concurrent: int = 2
     # False: post_review is not offered at all (--no-post).
     allow_post: bool = True
-    benchmark: str = "benchmark/cases.jsonl"
+    benchmark: str = ""  # "" = the bundled benchmark
 
 
 @dataclass
@@ -169,7 +170,8 @@ class Reviewer:
         self._slots = threading.BoundedSemaphore(max(1, settings.max_concurrent))
         # Running plus waiting for a slot; bounds threads and memory (wait=false returns at once).
         self.max_queued = max(1, settings.max_concurrent) * QUEUE_FACTOR
-        self.benchmark = Path(settings.benchmark).resolve()  # fixed by the operator at start
+        # Fixed by the operator at start; never chosen by a client.
+        self.benchmark = Path(settings.benchmark).resolve() if settings.benchmark else BUNDLED_CASES
 
     def config(self) -> ScrutaiConfig:
         try:

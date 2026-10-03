@@ -1,0 +1,99 @@
+name: release
+
+# Publishes to PyPI when a version tag is pushed: git tag v0.4.0 && git push origin v0.4.0
+# Uses PyPI trusted publishing (OIDC): no API token is stored anywhere. Each index must list
+# this repository, this workflow (release.yml) and the environment below as a trusted publisher.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # dry run: build, check and publish to TestPyPI only
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: The tag must match the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          test "v$version" = "$GITHUB_REF_NAME" \
+            || { echo "::error::tag $GITHUB_REF_NAME does not match version $version in pyproject.toml"; exit 1; }
+      - name: Build
+        run: uv build
+      - name: Check the metadata PyPI will render
+        run: uvx twine check --strict dist/*
+      - name: Smoke-test the built wheel in a clean environment
+        run: |
+          uv venv /tmp/smoke --python 3.12
+          uv pip install --python /tmp/smoke/bin/python "$(ls dist/*.whl)[web,mcp]"
+          cd /tmp
+          /tmp/smoke/bin/scrutai --help
+          /tmp/smoke/bin/scrutai review --demo --format json > demo.json || test $? -eq 1
+          /tmp/smoke/bin/python -c "import json; d = json.load(open('demo.json')); assert d['verdict'] == 'request_changes', d"
+          /tmp/smoke/bin/scrutai eval --min-precision 0.95 --min-recall 0.8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/scrutai/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true # a dry run may be repeated for the same version
+
+  pypi:
+    needs: testpypi
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/scrutai/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Release notes from RELEASES.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v h="## $version" '$0 == h {on = 1; next} on && /^## / {exit} on && /^---$/ {exit} on' \
+            RELEASES.md > notes.md
+          test -s notes.md || echo "See RELEASES.md." > notes.md
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Scrutai ${GITHUB_REF_NAME#v}" --notes-file notes.md

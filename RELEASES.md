@@ -12,7 +12,8 @@ behaviour; such changes are listed under **Changed**, with upgrade notes.
 | [0.1.0](#010) | 2026-10-01 | The reviewing engine | Superseded |
 | [0.0.0](#000-skeleton) | 2026-10-01 | Initial skeleton | Historical |
 
-Scrutai is not on PyPI yet. Install any version from GitHub, e.g.
+Install a released version from [PyPI](https://pypi.org/project/scrutai/) (`pip install scrutai==0.4.0`;
+0.4.0 is the first version published there), or any commit from GitHub, e.g.
 `pip install "scrutai @ git+https://github.com/imkarthiknr/Scrutai.git@main"`.
 
 ## Feature matrix
@@ -49,13 +50,7 @@ Scrutai is not on PyPI yet. Install any version from GitHub, e.g.
 
 ## Unreleased
 
-Changes on `main` that are not in a tagged version yet.
-
-### Documentation
-- The README shows Scrutai at work: a screen recording of the agent theater (GIF and MP4) and
-  screenshots of `review`, `eval`, the theater's trial board and an MCP client session, all
-  captured from real runs by `scripts/capture_media.py`.
-- `examples/mcp/try_it.py`: a scripted MCP client to try `scrutai mcp` without an AI client.
+Changes on `main` that are not in a tagged version yet. Nothing yet.
 
 ---
 
@@ -115,7 +110,23 @@ pull request. The engine is the same one the CLI, the Action and the web UI use.
 - The trace's `result` event is emitted after the budget and cancellation flags are set, so it
   reports them correctly.
 
+### Packaging
+- **On PyPI:** `pip install scrutai`, the first version published there.
+- The benchmark ships inside the package, so `scrutai eval` and the MCP `run_benchmark` tool work
+  after a plain `pip install`, from any directory. The cases moved from `benchmark/cases.jsonl`
+  to `src/scrutai/eval/cases.jsonl`; `--benchmark` now defaults to them.
+- PyPI metadata: project links, classifiers and a `py.typed` marker.
+- The source archive holds only what building and testing need (238 KB instead of 21.8 MB).
+- Releases are automated: pushing a `v*` tag builds, checks and smoke-tests the package, then
+  publishes it to TestPyPI and PyPI through trusted publishing, and creates the GitHub release.
+  A new `package` CI job runs the built wheel outside the repository on every change.
+
 ### Documentation
+- The README shows Scrutai at work: a screen recording of the agent theater (GIF and MP4) and
+  screenshots of `review`, `eval`, the theater's trial board and an MCP client session, all
+  captured from real runs by `scripts/capture_media.py`. Its links are absolute, so they also
+  work on the PyPI project page.
+- `examples/mcp/try_it.py`: a scripted MCP client to try `scrutai mcp` without an AI client.
 - A full README rewrite, `DEVELOPMENT.md` (the contributor guide) and this `RELEASES.md`, which
   replaces `CHANGELOG.md`. DEVELOPMENT.md gains an "Add an MCP tool" recipe.
 

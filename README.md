@@ -6,7 +6,7 @@
 *Every finding survives scrutiny, or it doesn't ship.*
 
 [![CI](https://github.com/imkarthiknr/Scrutai/actions/workflows/ci.yml/badge.svg)](https://github.com/imkarthiknr/Scrutai/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-0.4.0-6d4aff)
+[![PyPI](https://img.shields.io/pypi/v/scrutai?color=6d4aff)](https://pypi.org/project/scrutai/)
 ![python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![license](https://img.shields.io/badge/license-Apache--2.0-green)
 ![status](https://img.shields.io/badge/status-beta-yellow)
@@ -15,16 +15,16 @@
 [How it works](#how-it-works) ·
 [GitHub Action](#use-it-on-every-pull-request) ·
 [Agent theater](#watch-it-think-the-agent-theater) ·
-[MCP server](docs/MCP.md) ·
+[MCP server](https://github.com/imkarthiknr/Scrutai/blob/main/docs/MCP.md) ·
 [Configuration](#configuration-reference) ·
 [Benchmark](#benchmark) ·
-[Contributing](DEVELOPMENT.md) ·
-[Releases](RELEASES.md)
+[Contributing](https://github.com/imkarthiknr/Scrutai/blob/main/DEVELOPMENT.md) ·
+[Releases](https://github.com/imkarthiknr/Scrutai/blob/main/RELEASES.md)
 
-<img src="docs/images/theater.gif" alt="Screen recording of the Scrutai agent theater replaying a review: specialists light up, the critic loops through two rounds, and findings move from On trial to Upheld or Killed" width="900">
+<img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/theater.gif" alt="Screen recording of the Scrutai agent theater replaying a review: specialists light up, the critic loops through two rounds, and findings move from On trial to Upheld or Killed" width="900">
 
 <sub>The agent theater replaying a real review of the bundled demo (mock mode) ·
-<a href="docs/images/theater.mp4">watch it as MP4</a> · <a href="#see-it-in-action">more screenshots</a></sub>
+<a href="https://github.com/imkarthiknr/Scrutai/blob/main/docs/images/theater.mp4">watch it as MP4</a> · <a href="#see-it-in-action">more screenshots</a></sub>
 
 </div>
 
@@ -104,9 +104,7 @@ No API key needed. Scrutai runs in **mock mode** by default: the whole pipeline 
 against a deterministic stand-in model, so you can see every moving part before spending anything.
 
 ```bash
-git clone https://github.com/imkarthiknr/Scrutai.git
-cd Scrutai
-pip install -e ".[web]"
+pip install "scrutai[web]"
 
 scrutai review --demo --show-dropped   # a sample file with real bugs and planted traps
 scrutai serve                          # the agent theater at http://127.0.0.1:8765
@@ -116,7 +114,7 @@ scrutai eval                           # the benchmark: precision, recall, criti
 What the demo prints: five findings survived cross-examination, and the critic killed a planted trap
 (a shell call that only appears in a comment).
 
-<img src="docs/images/cli-review.png" alt="Terminal output of scrutai review --demo --show-dropped: verdict request_changes, a table of five upheld findings with severity, agent, confidence and file:line, and a table of one finding dropped by the critic because the pattern only appears in a comment" width="900">
+<img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/cli-review.png" alt="Terminal output of scrutai review --demo --show-dropped: verdict request_changes, a table of five upheld findings with severity, agent, confidence and file:line, and a table of one finding dropped by the critic because the pattern only appears in a comment" width="900">
 
 ### See it in action
 
@@ -125,8 +123,8 @@ critic's challenge, the specialist's defense and the final ruling.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/theater-verdict.png" alt="The agent theater after a review: run statistics, the verdict Request Changes, and the review graph from route through five specialists, collect, critic with its defend loop, to verdict"></td>
-<td width="50%"><img src="docs/images/theater-debate.png" alt="The trial board: five upheld findings and one killed; the Mutable default argument card is expanded to show round 1 challenge, the correctness agent's defense, and round 2 uphold"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/theater-verdict.png" alt="The agent theater after a review: run statistics, the verdict Request Changes, and the review graph from route through five specialists, collect, critic with its defend loop, to verdict"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/theater-debate.png" alt="The trial board: five upheld findings and one killed; the Mutable default argument card is expanded to show round 1 challenge, the correctness agent's defense, and round 2 uphold"></td>
 </tr>
 <tr>
 <td><sub>The finished review: stats, verdict and the review graph.</sub></td>
@@ -136,15 +134,15 @@ critic's challenge, the specialist's defense and the final ruling.
 
 **The benchmark** (`scrutai eval`): the critic removes every false positive without losing recall.
 
-<img src="docs/images/cli-eval.png" alt="Terminal output of scrutai eval: 50 cases; with the critic precision 1.0 and recall 0.897 with 0 false positives, versus specialists only precision 0.765, recall 0.897 and 8 false positives" width="760">
+<img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/cli-eval.png" alt="Terminal output of scrutai eval: 50 cases; with the critic precision 1.0 and recall 0.897 with 0 false positives, versus specialists only precision 0.765, recall 0.897 and 8 false positives" width="760">
 
 **From an AI assistant** (`scrutai mcp`): any MCP client can review and dig into findings.
-[`examples/mcp/try_it.py`](examples/mcp/try_it.py) is a ten-second, offline way to try it.
+[`examples/mcp/try_it.py`](https://github.com/imkarthiknr/Scrutai/blob/main/examples/mcp/try_it.py) is a ten-second, offline way to try it.
 
-<img src="docs/images/mcp-client.png" alt="Terminal output of examples/mcp/try_it.py: connected to scrutai mcp with 8 tools, review_patch returns verdict request_changes and findings F1 to F5, then explain_finding F2 shows the critic's challenge, the specialist's defense, the rulings per round and the code" width="900">
+<img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/mcp-client.png" alt="Terminal output of examples/mcp/try_it.py: connected to scrutai mcp with 8 tools, review_patch returns verdict request_changes and findings F1 to F5, then explain_finding F2 shows the critic's challenge, the specialist's defense, the rulings per round and the code" width="900">
 
 <sub>All screenshots and the recording are captured from real runs by
-[`scripts/capture_media.py`](scripts/capture_media.py).</sub>
+[`scripts/capture_media.py`](https://github.com/imkarthiknr/Scrutai/blob/main/scripts/capture_media.py).</sub>
 
 ## Installation
 
@@ -152,14 +150,17 @@ critic's challenge, the specialist's defense and the final ruling.
 (faster search; Scrutai falls back to `git grep` or pure Python), [Semgrep](https://semgrep.dev)
 (SAST evidence). Node.js is only needed to *develop* the web UI, not to run it.
 
-Scrutai is not on PyPI yet. Install it from GitHub:
+Scrutai is on [PyPI](https://pypi.org/project/scrutai/):
 
 ```bash
 # Core: CLI, agents, critic, benchmark, GitHub integration
-pip install "scrutai @ git+https://github.com/imkarthiknr/Scrutai.git"
+pip install scrutai
 
 # With extras (combine as needed)
-pip install "scrutai[web,semgrep] @ git+https://github.com/imkarthiknr/Scrutai.git"
+pip install "scrutai[web,mcp,semgrep]"
+
+# The latest development version, straight from GitHub
+pip install "scrutai @ git+https://github.com/imkarthiknr/Scrutai.git"
 ```
 
 | Extra | Adds | Install when you want |
@@ -170,7 +171,7 @@ pip install "scrutai[web,semgrep] @ git+https://github.com/imkarthiknr/Scrutai.g
 | `crewai` | CrewAI | the CrewAI framework backend |
 | `otel` | OpenTelemetry API + SDK | `tracing: otel` |
 | `langfuse` | Langfuse | `tracing: langfuse` |
-| `dev` | test, lint and type-check tooling | to contribute (see [DEVELOPMENT.md](DEVELOPMENT.md)) |
+| `dev` | test, lint and type-check tooling | to contribute (see [DEVELOPMENT.md](https://github.com/imkarthiknr/Scrutai/blob/main/DEVELOPMENT.md)) |
 
 ## Usage
 
@@ -269,7 +270,7 @@ jobs:
 ### Watch it think: the agent theater
 
 ```bash
-pip install -e ".[web]"
+pip install "scrutai[web]"
 scrutai serve                       # http://127.0.0.1:8765
 scrutai serve --replay run.jsonl    # open a recorded trace (from review --trace)
 ```
@@ -291,7 +292,7 @@ budget. The built UI ships inside the Python package; Node is only needed to wor
 ### Ask for it from your AI assistant: the MCP server
 
 ```bash
-pip install -e ".[mcp]"
+pip install "scrutai[mcp]"
 claude mcp add scrutai -- scrutai mcp --root "$PWD"     # Claude Code, local (stdio)
 
 # Remote, over Streamable HTTP with a bearer token:
@@ -314,7 +315,7 @@ Every tool returns structured results. The server also provides:
 - **Prompts:** `review-my-branch`, `fix-finding` and `security-audit`.
 
 Reviews report progress and can be cancelled. Repository paths are confined to `--root`. HTTP
-binds to localhost unless a token is set. See **[docs/MCP.md](docs/MCP.md)** for client configs,
+binds to localhost unless a token is set. See **[docs/MCP.md](https://github.com/imkarthiknr/Scrutai/blob/main/docs/MCP.md)** for client configs,
 every tool's schema and the security model.
 
 ### Measure it: the benchmark
@@ -444,7 +445,7 @@ flowchart LR
 
 The full design rationale (why hierarchical delegation, why grounded tools, why a debate, why a
 budget, what the mock model does and doesn't prove) is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+[docs/ARCHITECTURE.md](https://github.com/imkarthiknr/Scrutai/blob/main/docs/ARCHITECTURE.md).
 
 ## Configuration reference
 
@@ -477,7 +478,7 @@ modes or backends are rejected with a clear error (exit code `2`).
 
 ## Benchmark
 
-`scrutai eval` on the bundled 50-case benchmark (`benchmark/cases.jsonl`). Of the 50 cases, 22 are
+`scrutai eval` on the bundled 50-case benchmark (`src/scrutai/eval/cases.jsonl`, shipped in the package). Of the 50 cases, 22 are
 clean changes, many of them deliberate traps: sinks in comments and strings, constant commands,
 placeholder secrets, `yaml.safe_load`, bound SQL parameters, tests that already exist.
 
@@ -524,7 +525,7 @@ product:
     and caps input sizes.
   - Posting to GitHub is a separate tool, gated on the user's confirmation.
 
-  See [docs/MCP.md](docs/MCP.md#security-model).
+  See [docs/MCP.md](https://github.com/imkarthiknr/Scrutai/blob/main/docs/MCP.md#security-model).
 - **Mock mode sends nothing at all.**
 
 Found a vulnerability? Please report it privately through
@@ -547,14 +548,13 @@ Scrutai/
 │   ├── report.py           # Markdown and SARIF output
 │   ├── github.py           # PR diffs and idempotent PR reviews
 │   ├── trace.py            # JSONL / OpenTelemetry / Langfuse tracing
-│   ├── eval/harness.py     # the benchmark
+│   ├── eval/               # the benchmark harness and its 50 labelled cases
 │   ├── inputs.py, runs.py  # one input path and run store shared by CLI, web and MCP
 │   ├── mcp/                # `scrutai mcp`: tools, resources, prompts, HTTP auth
 │   ├── web/                # `scrutai serve` and the built UI bundle
 │   └── rules/semgrep.yml   # the bundled offline Semgrep ruleset
 ├── web/                    # the React + TypeScript source of the agent theater
 ├── tests/                  # 200+ tests, including browser and MCP end-to-end tests
-├── benchmark/cases.jsonl   # the labelled benchmark
 ├── action.yml              # the GitHub Action
 ├── examples/               # a ready-to-copy workflow and MCP client configs
 └── docs/                   # ARCHITECTURE.md (design rationale), MCP.md (MCP server reference)
@@ -584,12 +584,12 @@ is posted once, even if the code around it moves.
 
 **Can I use it from Claude Code, Claude Desktop or Cursor?**
 Yes, through the MCP server: `claude mcp add scrutai -- scrutai mcp --root "$PWD"`. See
-[docs/MCP.md](docs/MCP.md) for other clients and remote (HTTP) setups.
+[docs/MCP.md](https://github.com/imkarthiknr/Scrutai/blob/main/docs/MCP.md) for other clients and remote (HTTP) setups.
 
 **Can I use a different agent framework?**
 Yes. Specialists share one seam, `Specialist._loop`. The CrewAI backend overrides only that, and
 `scrutai eval --compare crewai` shows identical results on the benchmark. See
-[DEVELOPMENT.md](DEVELOPMENT.md#add-a-framework-backend) to add another one.
+[DEVELOPMENT.md](https://github.com/imkarthiknr/Scrutai/blob/main/DEVELOPMENT.md#add-a-framework-backend) to add another one.
 
 ## Roadmap
 
@@ -602,18 +602,18 @@ Yes. Specialists share one seam, `Specialist._loop`. The CrewAI backend override
 - 🔜 **Next:** published live-model benchmark numbers, a Google ADK backend, Semgrep taint rules for
   data-flow issues, a PyPI release.
 
-See [RELEASES.md](RELEASES.md) for what each version contains.
+See [RELEASES.md](https://github.com/imkarthiknr/Scrutai/blob/main/RELEASES.md) for what each version contains.
 
 ## Contributing
 
 Contributions are welcome: new specialists, Semgrep rules, benchmark cases (especially tricky
 false-positive traps), framework backends and UI improvements.
-[DEVELOPMENT.md](DEVELOPMENT.md) covers the setup, the architecture in five minutes, step-by-step
+[DEVELOPMENT.md](https://github.com/imkarthiknr/Scrutai/blob/main/DEVELOPMENT.md) covers the setup, the architecture in five minutes, step-by-step
 recipes for common changes, the testing approach and the pull-request checklist.
 
 ## License
 
-[Apache-2.0](LICENSE) © Karthik N R.
+[Apache-2.0](https://github.com/imkarthiknr/Scrutai/blob/main/LICENSE) © Karthik N R.
 
 Built on [LangGraph](https://github.com/langchain-ai/langgraph),
 [LiteLLM](https://github.com/BerriAI/litellm), [Semgrep](https://github.com/semgrep/semgrep),
