@@ -76,7 +76,7 @@ class CaseResult:
 
 def load_cases(path: str | Path) -> list[Case]:
     cases: list[Case] = []
-    for n, line in enumerate(Path(path).read_text().splitlines(), 1):
+    for n, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("//"):
             continue
         try:
@@ -103,12 +103,14 @@ def run_case(case: Case, config: ScrutaiConfig) -> CaseResult:
         for rel, content in case.repo.items():
             target = Path(root) / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
+            target.write_text(content, encoding="utf-8")
         # The changed file exists in the repo too, as the patch leaves it.
         target = Path(root) / case.file
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
-            target.write_text("\n".join(d.text for d in added_lines(case.patch)) + "\n")
+            target.write_text(
+                "\n".join(d.text for d in added_lines(case.patch)) + "\n", encoding="utf-8"
+            )
 
         diff = DiffContext(repo_root=root, files=[ChangedFile(path=case.file, patch=case.patch)])
         # Fresh client per case keeps token accounting per-run honest.

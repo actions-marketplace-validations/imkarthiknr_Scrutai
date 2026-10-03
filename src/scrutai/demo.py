@@ -37,7 +37,7 @@ def demo_diff() -> Iterator[DiffContext]:
     with tempfile.TemporaryDirectory(prefix="scrutai-demo-") as root:
         target = Path(root) / DEMO_FILE
         target.parent.mkdir(parents=True)
-        target.write_text(DEMO_SOURCE)
+        target.write_text(DEMO_SOURCE, encoding="utf-8")
         patch = "".join(f"+{line}\n" for line in DEMO_SOURCE.splitlines())
         yield DiffContext(repo_root=root, files=[ChangedFile(path=DEMO_FILE, patch=patch)])
 
