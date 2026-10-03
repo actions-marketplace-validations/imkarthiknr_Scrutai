@@ -86,7 +86,9 @@ jobs:
           git config user.email ci@example.com; git config user.name ci
           "x = 1" | Out-File -Encoding utf8NoBOM app.py
           git add -A; git commit -q -m base; git checkout -q -b feature
-          'MSG = "don’t panic 🚀"' | Out-File -Encoding utf8NoBOM -Append app.py
+          # Built from code points: PowerShell itself parses U+2019 as a quote character.
+          $line = 'MSG = "don' + [char]0x2019 + 't panic ' + [char]::ConvertFromUtf32(0x1F680) + '"'
+          $line | Out-File -Encoding utf8NoBOM -Append app.py
           git commit -q -am change
           scrutai review --base main --head feature -f markdown -o review.md; Check "UTF-8 diff review"
           if (-not (Select-String -Path review.md -Pattern "Scrutai review" -Quiet)) { Write-Error "empty report"; exit 1 }
