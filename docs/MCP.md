@@ -36,6 +36,14 @@ Reviews use your `.scrutai.yml` (or `--config FILE`). The default is **mock mode
 pipeline runs offline, with no API key. Set `llm_mode: live` (and e.g. `ANTHROPIC_API_KEY`) for
 real reviews.
 
+To check that the server works before wiring up a client, run the scripted client:
+
+```bash
+python examples/mcp/try_it.py   # starts scrutai mcp over stdio, reviews a patch, explains a finding
+```
+
+![Output of examples/mcp/try_it.py](images/mcp-client.png)
+
 ## Connect a client
 
 Ready-to-paste configs are in [`examples/mcp/`](../examples/mcp/).

@@ -23,6 +23,7 @@ New here? Read [README.md](README.md) first for *what* Scrutai does, and
   - [Add or change a trace event](#add-or-change-a-trace-event)
   - [Work on the web UI](#work-on-the-web-ui)
   - [Add an MCP tool](#add-an-mcp-tool)
+  - [Update the README's screenshots and recording](#update-the-readmes-screenshots-and-recording)
 - [Testing guide](#testing-guide)
 - [Conventions](#conventions)
 - [Pull requests](#pull-requests)
@@ -354,6 +355,18 @@ The MCP server is a thin adapter, so a new tool is usually a few lines in `build
    both SDK majors and can answer elicitation. Add a case to `tests/test_mcp_*.py`, and run the
    MCP job above so it also passes on mcp 2.
 7. **Document it** in the tools table in `docs/MCP.md`.
+
+### Update the README's screenshots and recording
+
+The README's images and screen recording are captured from real runs in mock mode. After a change
+to the CLI output or the UI, regenerate them:
+
+```bash
+python scripts/capture_media.py   # needs the dev extra, Chromium for Playwright, and ffmpeg
+```
+
+The script writes `docs/images/*.png`, `theater.gif` and `theater.mp4`. Check the result by eye
+before committing; keep the GIF under about 5 MB.
 
 ## Testing guide
 

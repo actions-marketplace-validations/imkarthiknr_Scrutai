@@ -49,7 +49,13 @@ Scrutai is not on PyPI yet. Install any version from GitHub, e.g.
 
 ## Unreleased
 
-Changes on `main` that are not in a tagged version yet. Nothing yet.
+Changes on `main` that are not in a tagged version yet.
+
+### Documentation
+- The README shows Scrutai at work: a screen recording of the agent theater (GIF and MP4) and
+  screenshots of `review`, `eval`, the theater's trial board and an MCP client session, all
+  captured from real runs by `scripts/capture_media.py`.
+- `examples/mcp/try_it.py`: a scripted MCP client to try `scrutai mcp` without an AI client.
 
 ---
 

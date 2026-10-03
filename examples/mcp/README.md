@@ -5,6 +5,7 @@ Ready-to-paste configurations for connecting MCP clients to `scrutai mcp`. The f
 
 | File | Client |
 |---|---|
+| [`try_it.py`](try_it.py) | No client needed: a scripted MCP client that starts `scrutai mcp`, reviews a patch and explains a finding (offline) |
 | [`claude-code.sh`](claude-code.sh) | Claude Code: local (stdio) or remote (HTTP + bearer token) |
 | [`claude_desktop_config.json`](claude_desktop_config.json) | Claude Desktop |
 | [`cursor-mcp.json`](cursor-mcp.json) | Cursor (`.cursor/mcp.json`): local, read-only (`--no-post`), and remote |
