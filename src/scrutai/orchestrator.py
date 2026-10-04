@@ -30,7 +30,7 @@ from .concurrency import parallel_map
 from .config import ScrutaiConfig
 from .critic import critique, dedupe
 from .diff import chunk_diff
-from .llm import BudgetedClient, CancellableClient, LLMClient
+from .llm import BudgetedClient, CancellableClient, ErrorCountingClient, LLMClient
 from .models import DiffContext, Finding, ReviewResult, Verdict
 from .router import heuristic_route, route
 from .trace import Tracer, TracingClient, emit, finding_ref, span, traced_node, tracing
@@ -204,7 +204,8 @@ def review_diff(
     Set `cancel` from another thread to stop the review early: no further
     model calls are made and the result comes back marked partial.
     """
-    budgeted = BudgetedClient(llm, config.token_budget, config.max_cost_usd)
+    counted = ErrorCountingClient(llm)
+    budgeted = BudgetedClient(counted, config.token_budget, config.max_cost_usd)
     guarded: LLMClient = budgeted
     cancellable: CancellableClient | None = None
     if cancel is not None:
@@ -223,7 +224,18 @@ def review_diff(
         if cancellable is not None and cancellable.cancelled:
             result.cancelled = True
             result.summary += " Cancelled: this review is partial."
-        if (result.budget_exhausted or result.cancelled) and result.verdict == Verdict.APPROVE:
+        result.model_calls, result.model_errors = counted.calls, counted.errors
+        result.model_error = counted.first_error
+        if result.model_unavailable:
+            result.summary = (
+                f"No model call succeeded ({counted.errors} failed): {counted.first_error} "
+                "This review reflects nothing a model said."
+            )
+        elif counted.errors:
+            result.summary += f" {counted.errors} of {counted.calls} model call(s) failed."
+        if (
+            result.budget_exhausted or result.cancelled or result.model_unavailable
+        ) and result.verdict == Verdict.APPROVE:
             # Not everything was reviewed, so silence is not approval.
             result.verdict = Verdict.COMMENT
         # After the flags, so a replayed trace knows the review was partial.

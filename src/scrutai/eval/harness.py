@@ -61,6 +61,9 @@ class CaseResult:
     rounds: int
     cost: float = 0.0  # dollars, live mode (0 for mock or unpriced models)
     partial: bool = False  # the per-review budget ran out on this case
+    model_calls: int = 0
+    model_errors: int = 0
+    model_error: str | None = None
 
     def score(self, got: list[str]) -> tuple[int, int, int]:
         expected, found = Counter(self.case.labels), Counter(got)
@@ -128,6 +131,9 @@ def run_case(case: Case, config: ScrutaiConfig) -> CaseResult:
         rounds=result.rounds,
         cost=result.cost_usd,
         partial=result.budget_exhausted,
+        model_calls=result.model_calls,
+        model_errors=result.model_errors,
+        model_error=result.model_error,
     )
 
 
@@ -226,6 +232,9 @@ def run_benchmark(
             "partial_cases": sum(r.partial for r in results),
             "total_cost_usd": round(total_cost, 4),
             "avg_cost_per_case": round(total_cost / len(results), 4) if results else 0.0,
+            "model_calls": sum(r.model_calls for r in results),
+            "model_errors": sum(r.model_errors for r in results),
+            "first_model_error": next((r.model_error for r in results if r.model_error), None),
         }
     )
     return metrics
@@ -251,6 +260,14 @@ def _mode_lines(m: dict[str, Any]) -> list[str]:
         lines.append(
             f"> Stopped at the cost cap after {m['cases']} of {m['cases_planned']} cases: "
             "the numbers cover those cases only."
+        )
+    if m.get("model_errors"):
+        all_failed = m["model_errors"] == m.get("model_calls")
+        lines.append(
+            f"> **{'Every' if all_failed else m['model_errors']} model call"
+            f"{'' if all_failed else ' of ' + str(m.get('model_calls'))} failed"
+            f"{': these numbers are meaningless' if all_failed else ''}.** "
+            f"First error: `{m.get('first_model_error')}`"
         )
     if m.get("partial_cases"):
         lines.append(f"> {m['partial_cases']} case(s) hit the per-review budget and are partial.")

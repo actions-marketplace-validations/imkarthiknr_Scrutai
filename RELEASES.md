@@ -66,6 +66,15 @@ Changes on `main` that are not in a tagged version yet.
   and missed issues.
 
 ### Fixed
+- **Model failures were silent.** When every model call failed (for example a missing or invalid
+  API key, an unknown model name, or a network error), agents and the critic carried on without
+  output, so a live review or benchmark looked clean: no findings, $0, recall 0.
+  - Scrutai now counts provider failures. Results carry `model_calls`, `model_errors` and the
+    first `model_error`.
+  - `review` exits 2 with the provider's error when no call succeeds (and never posts to a PR), and
+    warns when some calls fail.
+  - `eval` stops after the first case if every call failed, and reports name failed calls.
+  - The MCP review summary includes the errors.
 - **`--config FILE` silently fell back to the defaults (mock mode) when the file didn't exist.**
   A "live" benchmark could then run in mock mode without warning. A missing file you name is now
   an error (exit 2), with a hint when Notepad saved it as `FILE.txt`. A missing default
