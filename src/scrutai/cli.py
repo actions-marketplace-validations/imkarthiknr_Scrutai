@@ -33,6 +33,23 @@ app = typer.Typer(add_completion=False, help="Multi-agent code review with an ad
 console = Console()
 
 
+def _show_version(value: bool) -> None:
+    if value:
+        from . import __version__
+
+        typer.echo(f"scrutai {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False, "--version", callback=_show_version, is_eager=True, help="Show the version and exit."
+    ),
+) -> None:
+    """Multi-agent code review with an adversarial critic."""
+
+
 class Format(StrEnum):
     table = "table"
     json = "json"
@@ -296,6 +313,12 @@ def eval_cmd(
     compare: str | None = typer.Option(
         None, help="Also run every agent on this backend (e.g. crewai) and compare."
     ),
+    limit: int | None = typer.Option(
+        None, min=1, help="Only the first N cases (try a live model cheaply first)."
+    ),
+    max_total_cost: float = typer.Option(
+        0.0, help="Live mode: stop after the case that brings the run's cost to this ($)."
+    ),
 ) -> None:
     """Run the labeled benchmark and report precision / recall / critic lift."""
     from .eval.harness import (
@@ -313,7 +336,9 @@ def eval_cmd(
         raise typer.Exit(code=2)
     if compare:
         try:
-            comparison = compare_backends(benchmark, _load_config(config_path), ["native", compare])
+            comparison = compare_backends(
+                benchmark, _load_config(config_path), ["native", compare], limit=limit
+            )
         except (ValueError, RuntimeError) as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
@@ -334,8 +359,24 @@ def eval_cmd(
             raise typer.Exit(code=1)
         return
     details: list[CaseResult] = []
+    config = _load_config(config_path)
+    err = Console(stderr=True)
+    if config.llm_mode != "mock":
+        err.print(
+            f"[yellow]Live model run[/yellow] ({config.models.specialist} …): every case calls "
+            "the model and costs money"
+            + (f"; stopping at ${max_total_cost:.2f}." if max_total_cost else ".")
+        )
+
+    def progress(done: int, total: int, case: str) -> None:
+        if config.llm_mode != "mock":  # live cases take seconds each: show they move
+            spent = sum(r.cost for r in details)
+            err.print(f"  [{done}/{total}] {case}  (${spent:.3f} so far)")
+
     try:
-        metrics = run_benchmark(benchmark, _load_config(config_path), details)
+        metrics = run_benchmark(
+            benchmark, config, details, progress, limit=limit, max_total_cost=max_total_cost
+        )
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from exc

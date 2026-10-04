@@ -59,6 +59,8 @@ class CaseResult:
     raw: list[str]  # categories before the critic
     tokens: int
     rounds: int
+    cost: float = 0.0  # dollars, live mode (0 for mock or unpriced models)
+    partial: bool = False  # the per-review budget ran out on this case
 
     def score(self, got: list[str]) -> tuple[int, int, int]:
         expected, found = Counter(self.case.labels), Counter(got)
@@ -124,6 +126,8 @@ def run_case(case: Case, config: ScrutaiConfig) -> CaseResult:
         raw=[f.category for f in raw if f.severity.rank >= config.min_severity.rank],
         tokens=result.tokens_used,
         rounds=result.rounds,
+        cost=result.cost_usd,
+        partial=result.budget_exhausted,
     )
 
 
@@ -194,20 +198,63 @@ def run_benchmark(
     details: list[CaseResult] | None = None,
     on_case: CaseCallback | None = None,
     limit: int | None = None,
+    max_total_cost: float = 0.0,
 ) -> dict[str, Any]:
     """Run every case (or the first `limit`) and return aggregate metrics.
 
-    Pass a list as `details` to also collect the per-case results.
+    Pass a list as `details` to also collect the per-case results. With
+    `max_total_cost` (dollars, 0 = no cap) the run stops after the case that
+    reaches it; the metrics then cover the cases that ran and say so.
     """
     cases = load_cases(path)[:limit] if limit else load_cases(path)
-    results: list[CaseResult] = []
+    # Filled as cases finish, so an on_case callback can read the running cost.
+    results: list[CaseResult] = details if details is not None else []
     for case in cases:
         results.append(run_case(case, config))
         if on_case:
             on_case(len(results), len(cases), case.id)
-    if details is not None:
-        details.extend(results)
-    return summarize(results)
+        if max_total_cost and sum(r.cost for r in results) >= max_total_cost:
+            break
+    metrics = summarize(results)
+    total_cost = sum(r.cost for r in results)
+    metrics.update(
+        {
+            "llm_mode": config.llm_mode,
+            "models": config.models.model_dump() if config.llm_mode != "mock" else {},
+            "cases_planned": len(cases),
+            "stopped_early": len(results) < len(cases),
+            "partial_cases": sum(r.partial for r in results),
+            "total_cost_usd": round(total_cost, 4),
+            "avg_cost_per_case": round(total_cost / len(results), 4) if results else 0.0,
+        }
+    )
+    return metrics
+
+
+def _mode_lines(m: dict[str, Any]) -> list[str]:
+    """Say which model produced the numbers: a mock run must never read as a model's quality."""
+    mode = m.get("llm_mode", "mock")
+    if mode == "mock":
+        return [
+            "> **Pipeline check (mock model).** These numbers come from the offline, rule-based "
+            "stand-in model. They show the machinery works; they are not a measure of any LLM.",
+            "",
+        ]
+    models = m.get("models") or {}
+    used = ", ".join(f"{role} `{name}`" for role, name in models.items())
+    lines = [
+        f"> **Live model run.** Models: {used or 'see config'}. "
+        f"Cost ${m.get('total_cost_usd', 0):.2f} (about ${m.get('avg_cost_per_case', 0):.3f} "
+        "per case; $0 means the model has no price in LiteLLM's table).",
+    ]
+    if m.get("stopped_early"):
+        lines.append(
+            f"> Stopped at the cost cap after {m['cases']} of {m['cases_planned']} cases: "
+            "the numbers cover those cases only."
+        )
+    if m.get("partial_cases"):
+        lines.append(f"> {m['partial_cases']} case(s) hit the per-review budget and are partial.")
+    return [*lines, ""]
 
 
 def markdown_report(metrics: dict[str, Any], results: list[CaseResult]) -> str:
@@ -215,6 +262,7 @@ def markdown_report(metrics: dict[str, Any], results: list[CaseResult]) -> str:
     lines = [
         "# Scrutai benchmark report",
         "",
+        *_mode_lines(m),
         f"{m['cases']} cases ({m['clean_cases']} clean).",
         "",
         "| metric | with critic | specialists only |",

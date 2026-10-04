@@ -1,0 +1,61 @@
+name: False positive
+description: Scrutai reported a finding that is wrong, and the critic did not kill it.
+labels: [false-positive]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        False positives are the main thing Scrutai is built to prevent, so these reports matter:
+        each confirmed one can become a benchmark case. **Never paste API keys, tokens or private
+        code.** A minimal snippet that reproduces it is ideal.
+  - type: input
+    id: version
+    attributes:
+      label: Scrutai version
+      placeholder: "0.4.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Model mode
+      options:
+        - mock (default, offline)
+        - live
+    validations:
+      required: true
+  - type: input
+    id: models
+    attributes:
+      label: Models (live mode)
+      description: The `models` from your config, e.g. specialist and critic.
+      placeholder: "specialist anthropic/claude-sonnet-5-5, critic anthropic/claude-opus-5-5"
+  - type: textarea
+    id: finding
+    attributes:
+      label: The finding
+      description: Paste it as reported, including agent, category, severity, file:line and the critic's note. `-f markdown` or `--json` output is ideal.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: The code it points at
+      description: The diff or the lines around it, minimal and with secrets removed.
+      render: diff
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is wrong
+      description: For example, the input is already validated, or the pattern is in a comment.
+    validations:
+      required: true
+  - type: checkboxes
+    id: benchmark
+    attributes:
+      label: Benchmark
+      options:
+        - label: The snippet above can be added to Scrutai's public benchmark as a test case.
