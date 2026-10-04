@@ -1,0 +1,67 @@
+name: Bug report
+description: Scrutai crashed, errored, or did not do what the docs say.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Never paste API keys, tokens or private code.** Redact them.
+        Is a finding wrong or missing? Use the *False positive* or *Missed issue* form instead.
+  - type: input
+    id: version
+    attributes:
+      label: Scrutai version
+      description: Output of `pip show scrutai`, the Version line.
+      placeholder: "0.4.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: How were you running it?
+      options:
+        - CLI (scrutai review / eval)
+        - Agent theater (scrutai serve)
+        - MCP server (scrutai mcp)
+        - GitHub Action
+        - Python library
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, and shell.
+      placeholder: "Windows 11, Python 3.12.8, Command Prompt"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Model mode
+      options:
+        - mock (default, offline)
+        - live
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and config
+      description: The exact command, and your .scrutai.yml with anything sensitive removed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The full error or traceback, and what you expected instead.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: A small diff, repository or steps that reproduce it, if you can.

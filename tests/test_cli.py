@@ -107,3 +107,10 @@ def test_bad_inputs_exit_2(tmp_path: Path) -> None:
     bad.write_text("enabled_agents: [security, telepathy]\n")
     res = runner.invoke(app, ["review", "--demo", "--config", str(bad)])
     assert res.exit_code == 2 and "telepathy" in res.output
+
+
+def test_version_flag() -> None:
+    from scrutai import __version__
+
+    res = CliRunner().invoke(app, ["--version"])
+    assert res.exit_code == 0 and res.output.strip() == f"scrutai {__version__}"

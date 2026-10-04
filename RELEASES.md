@@ -51,7 +51,23 @@ Install a released version from [PyPI](https://pypi.org/project/scrutai/) (`pip 
 
 ## Unreleased
 
-Changes on `main` that are not in a tagged version yet. Nothing yet.
+Changes on `main` that are not in a tagged version yet.
+
+### Added
+- **Safe real-model benchmark runs:**
+  - `scrutai eval --limit N` runs only the first N cases, and `--max-total-cost` stops the run
+    once it has spent that much;
+  - live runs show per-case progress with the running cost;
+  - reports give the models, the total cost and the cost per case.
+- **Every benchmark report says which model produced it.** Mock runs are labelled *pipeline check
+  (mock model)*, so they are never mistaken for a model's quality.
+- `scrutai --version`.
+- `SECURITY.md` (how to report, scope, response times) and issue forms for bugs, false positives
+  and missed issues.
+
+### Documentation
+- The README labels the mock numbers as a pipeline check, and adds a *Real models* section with how
+  to measure a model yourself. Its real-model numbers are still to be published.
 
 ---
 

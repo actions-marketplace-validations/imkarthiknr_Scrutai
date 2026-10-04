@@ -91,7 +91,7 @@ critic has to earn its tokens.
 | 🐙 **GitHub Action** | One summary comment edited in place, plus inline comments that are never re-posted across pushes. SARIF output for GitHub code scanning. |
 | 🤖 **MCP server** | `scrutai mcp` gives Claude Code, Claude Desktop, Cursor and other MCP clients review, explain and benchmark tools, over stdio or authenticated HTTP. It posts to a PR only after the user confirms. |
 | 🎭 **Agent theater** | A React UI that shows a review live (or replays a recording): the agent graph, and a trial board following each finding from raised to upheld or killed. |
-| 📏 **Benchmark harness** | 50 labelled cases including deliberate traps; precision, recall, clean-diff false-positive rate and the critic's lift; usable as a CI gate. |
+| 📏 **Benchmark harness** | 50 labelled cases including deliberate traps; precision, recall, clean-diff false-positive rate and the critic's lift; usable as a CI gate. The published numbers are a pipeline check with the mock model; [measure a real model](#real-models) yourself. |
 | 💸 **Cost guardrails** | Per-review token and dollar caps; partial reviews are flagged, and nothing unjudged ships. |
 | ⚡ **Built for big diffs** | Diffs are chunked (~250 added lines), each chunk is routed on its own, and agents run concurrently. |
 | 🔭 **Observability** | JSONL traces of every node, LLM call, tool call and critic decision; OpenTelemetry and Langfuse exporters. |
@@ -108,7 +108,7 @@ pip install "scrutai[web]"
 
 scrutai review --demo --show-dropped   # a sample file with real bugs and planted traps
 scrutai serve                          # the agent theater at http://127.0.0.1:8765
-scrutai eval                           # the benchmark: precision, recall, critic lift
+scrutai eval                           # the benchmark (a pipeline check in mock mode)
 ```
 
 What the demo prints: five findings survived cross-examination, and the critic killed a planted trap
@@ -132,9 +132,11 @@ critic's challenge, the specialist's defense and the final ruling.
 </tr>
 </table>
 
-**The benchmark** (`scrutai eval`): the critic removes every false positive without losing recall.
+**The benchmark** (`scrutai eval`), here as a **pipeline check (mock model)**: the critic removes
+every false positive the deliberately noisy stand-in raises, without losing recall. This shows the
+machinery works; it is not a measure of any LLM (see [Real models](#real-models)).
 
-<img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/cli-eval.png" alt="Terminal output of scrutai eval: 50 cases; with the critic precision 1.0 and recall 0.897 with 0 false positives, versus specialists only precision 0.765, recall 0.897 and 8 false positives" width="760">
+<img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/cli-eval.png" alt="Terminal output of scrutai eval, labelled pipeline check (mock model): 50 cases; with the critic precision 1.0 and recall 0.897 with 0 false positives, versus specialists only precision 0.765, recall 0.897 and 8 false positives" width="760">
 
 **From an AI assistant** (`scrutai mcp`): any MCP client can review and dig into findings.
 [`examples/mcp/try_it.py`](https://github.com/imkarthiknr/Scrutai/blob/main/examples/mcp/try_it.py) is a ten-second, offline way to try it.
@@ -333,7 +335,13 @@ scrutai eval --min-precision 0.95 --min-recall 0.8   # as a CI gate (exit 1 belo
 scrutai eval --report eval.md --json           # markdown report + JSON metrics
 scrutai eval --compare crewai                  # same benchmark, native vs CrewAI agents
 scrutai eval --benchmark my-cases.jsonl        # your own labelled cases
+
+# Against a real model (llm_mode: live in the config): start small, cap the spend
+scrutai eval --config live.yml --limit 5 --max-total-cost 2 --report live-eval.md
 ```
+
+Every report says which model produced its numbers: mock runs are labelled **pipeline check (mock
+model)**; live runs list the models and what the run cost.
 
 Each case is one JSON line with the patch, the expected finding categories, and optionally other
 files of the repository it lives in:
@@ -520,6 +528,8 @@ modes or backends are rejected with a clear error (exit code `2`).
 
 ## Benchmark
 
+### Pipeline check (mock model)
+
 `scrutai eval` on the bundled 50-case benchmark (`src/scrutai/eval/cases.jsonl`, shipped in the package). Of the 50 cases, 22 are
 clean changes, many of them deliberate traps: sinks in comments and strings, constant commands,
 placeholder secrets, `yaml.safe_load`, bound SQL parameters, tests that already exist.
@@ -546,6 +556,20 @@ placeholder secrets, `yaml.safe_load`, bound SQL parameters, tests that already 
 > numbers can't quietly become flattering.
 
 CI runs this benchmark on every pull request as a regression gate.
+
+### Real models
+
+**Not published yet.** Real-model precision and recall will be added here, with the models, the
+date and the cost, once measured. To measure it yourself (it uses your key and is billed to you):
+
+```bash
+scrutai eval --config live.yml --limit 5 --max-total-cost 2      # a first look: 5 cases
+scrutai eval --config live.yml --max-total-cost 20 --report live-eval.md   # all 50 cases
+```
+
+Expect real models to differ from the mock: they find issues the mock's rules cannot, and they make
+mistakes of their own. Please share results, especially false positives, through a
+[false-positive report](https://github.com/imkarthiknr/Scrutai/issues/new?template=false_positive.yml).
 
 ## Security and privacy
 
@@ -574,7 +598,8 @@ product:
 
 Found a vulnerability? Please report it privately through
 [GitHub security advisories](https://github.com/imkarthiknr/Scrutai/security/advisories/new)
-rather than in a public issue.
+rather than in a public issue. See [SECURITY.md](https://github.com/imkarthiknr/Scrutai/blob/main/SECURITY.md) for what is in scope and
+what to expect.
 
 ## Project layout
 

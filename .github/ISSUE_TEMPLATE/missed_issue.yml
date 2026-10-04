@@ -1,0 +1,58 @@
+name: Missed issue
+description: A real problem in a reviewed change that Scrutai did not report, or that the critic killed.
+labels: [missed-issue]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste API keys, tokens or private code.** A minimal snippet that reproduces it is
+        ideal. Run with `--show-dropped` first: if the critic killed a correct finding, say so below.
+  - type: input
+    id: version
+    attributes:
+      label: Scrutai version
+      placeholder: "0.4.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Model mode
+      options:
+        - mock (default, offline)
+        - live
+    validations:
+      required: true
+  - type: input
+    id: models
+    attributes:
+      label: Models (live mode)
+  - type: textarea
+    id: code
+    attributes:
+      label: The change
+      description: The diff that contains the problem, minimal and with secrets removed.
+      render: diff
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have been reported
+      description: The problem, the line, and the category if you know it (for example injection, broad_except or missing_tests).
+    validations:
+      required: true
+  - type: dropdown
+    id: dropped
+    attributes:
+      label: Did it appear under --show-dropped?
+      options:
+        - "No: no agent raised it"
+        - "Yes: the critic killed it"
+        - "Didn't check"
+  - type: checkboxes
+    id: benchmark
+    attributes:
+      label: Benchmark
+      options:
+        - label: The snippet above can be added to Scrutai's public benchmark as a test case.
