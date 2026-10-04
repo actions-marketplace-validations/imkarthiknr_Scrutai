@@ -20,7 +20,7 @@ LIVE = ScrutaiConfig(llm_mode="live")
 
 
 def fake_case(cost: float) -> Any:
-    def run(case: Case, config: ScrutaiConfig) -> CaseResult:
+    def run(case: Case, config: ScrutaiConfig, trace_dir: object = None) -> CaseResult:
         return CaseResult(
             case=case,
             reported=list(case.labels),
@@ -90,3 +90,12 @@ def test_cli_limit_and_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert '"cases": 2' in res.output and '"stopped_early": true' in res.output
     bad = CliRunner().invoke(app, ["eval", "--limit", "0"])
     assert bad.exit_code == 2
+
+
+def test_trace_dir_writes_one_trace_per_case(tmp_path: Path) -> None:
+    res = CliRunner().invoke(app, ["eval", "--limit", "3", "--trace-dir", str(tmp_path / "t")])
+    assert res.exit_code == 0, res.output
+    files = sorted(p.name for p in (tmp_path / "t").iterdir())
+    assert files == ["inj-01.jsonl", "inj-02.jsonl", "inj-03.jsonl"]
+    text = (tmp_path / "t" / "inj-01.jsonl").read_text(encoding="utf-8")
+    assert '"kind": "finding"' in text or '"kind":"finding"' in text

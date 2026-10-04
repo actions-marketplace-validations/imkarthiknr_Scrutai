@@ -62,6 +62,8 @@ Changes on `main` that are not in a tagged version yet.
 - **Every benchmark report says which model produced it.** Mock runs are labelled *pipeline check
   (mock model)*, so they are never mistaken for a model's quality.
 - `scrutai --version`.
+- `scrutai eval --trace-dir DIR` writes one trace per case (`<case id>.jsonl`): the findings, the
+  critic's decisions and the debate, to see why a case scored as it did.
 - `SECURITY.md` (how to report, scope, response times) and issue forms for bugs, false positives
   and missed issues.
 

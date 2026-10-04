@@ -349,6 +349,9 @@ def eval_cmd(
     max_total_cost: float = typer.Option(
         0.0, help="Live mode: stop after the case that brings the run's cost to this ($)."
     ),
+    trace_dir: str | None = typer.Option(
+        None, help="Write each case's trace here (<case id>.jsonl), to see why it scored so."
+    ),
 ) -> None:
     """Run the labeled benchmark and report precision / recall / critic lift."""
     from .eval.harness import (
@@ -414,8 +417,16 @@ def eval_cmd(
                 raise typer.Exit(code=2)
 
     try:
+        if trace_dir:
+            Path(trace_dir).mkdir(parents=True, exist_ok=True)
         metrics = run_benchmark(
-            benchmark, config, details, progress, limit=limit, max_total_cost=max_total_cost
+            benchmark,
+            config,
+            details,
+            progress,
+            limit=limit,
+            max_total_cost=max_total_cost,
+            trace_dir=trace_dir,
         )
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
