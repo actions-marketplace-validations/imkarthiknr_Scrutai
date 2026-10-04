@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from scrutai.cli import app
@@ -114,3 +115,20 @@ def test_version_flag() -> None:
 
     res = CliRunner().invoke(app, ["--version"])
     assert res.exit_code == 0 and res.output.strip() == f"scrutai {__version__}"
+
+
+def test_a_named_config_that_does_not_exist_is_an_error(tmp_path: Path) -> None:
+    """Falling back to defaults would silently run a 'live' benchmark in mock mode."""
+    missing = tmp_path / "live.yml"
+    for args in (["review", "--demo"], ["eval", "--limit", "1"]):
+        res = CliRunner().invoke(app, [*args, "--config", str(missing)])
+        assert res.exit_code == 2 and "Config file not found" in res.output
+    (tmp_path / "live.yml.txt").write_text("llm_mode: live\n", encoding="utf-8")
+    res = CliRunner().invoke(app, ["review", "--demo", "--config", str(missing)])
+    assert res.exit_code == 2 and "Notepad added .txt" in res.output
+
+
+def test_the_default_config_may_be_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    res = CliRunner().invoke(app, ["review", "--demo"])
+    assert res.exit_code == 1  # findings, run with the built-in defaults

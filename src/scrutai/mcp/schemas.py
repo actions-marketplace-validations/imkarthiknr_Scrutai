@@ -83,6 +83,10 @@ class ReviewSummary(BaseModel):
     rounds: int = 0
     tokens_used: int = 0
     cost_usd: float = 0.0
+    model_errors: int = Field(
+        default=0, description="Model calls that failed (auth, unknown model, network…)."
+    )
+    model_error: str | None = Field(default=None, description="The first model error.")
 
     @classmethod
     def of(cls, run: Run, result: ReviewResult | None, files: int = 0) -> ReviewSummary:
@@ -103,6 +107,8 @@ class ReviewSummary(BaseModel):
                 "rounds": result.rounds,
                 "tokens_used": result.tokens_used,
                 "cost_usd": round(result.cost_usd, 6),
+                "model_errors": result.model_errors,
+                "model_error": result.model_error,
             }
         )
 

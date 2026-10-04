@@ -198,6 +198,17 @@ class ReviewResult(BaseModel):
     budget_exhausted: bool = False
     # The caller cancelled the review; like a budget stop, the result is partial.
     cancelled: bool = False
+    # Model calls that failed at the provider (auth, unknown model, network, …) and the
+    # first error. Agents and the critic survive these, so without counting them a review
+    # in which every call failed would look like a clean one.
+    model_calls: int = 0
+    model_errors: int = 0
+    model_error: str | None = None
+
+    @property
+    def model_unavailable(self) -> bool:
+        """Every model call failed: the review reflects nothing a model said."""
+        return self.model_calls > 0 and self.model_errors == self.model_calls
 
     def by_severity(self) -> dict[str, int]:
         counts: dict[str, int] = {}

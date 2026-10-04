@@ -109,6 +109,45 @@ class LiteLLMClient:
         return str(content)
 
 
+class ErrorCountingClient:
+    """Wraps the provider client and counts the calls that fail there.
+
+    Sits innermost, below the budget and cancel guards, so only real provider
+    failures count (not calls those guards refuse).
+    """
+
+    def __init__(self, inner: LLMClient) -> None:
+        self.inner = inner
+        self.calls = 0
+        self.errors = 0
+        self.first_error: str | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def tokens_used(self) -> int:
+        return self.inner.tokens_used
+
+    @property
+    def cost_usd(self) -> float:
+        return self.inner.cost_usd
+
+    @property
+    def last_call_tokens(self) -> int | None:
+        return getattr(self.inner, "last_call_tokens", None)
+
+    def complete(self, *, model: str, system: str, prompt: str) -> str:
+        with self._lock:
+            self.calls += 1
+        try:
+            return self.inner.complete(model=model, system=system, prompt=prompt)
+        except LLMError as exc:
+            with self._lock:
+                self.errors += 1
+                if self.first_error is None:
+                    self.first_error = " ".join(str(exc).split())[:300]
+            raise
+
+
 class BudgetExceeded(LLMError):
     """The review hit its token or dollar budget; no further calls are made."""
 
@@ -203,6 +242,7 @@ __all__ = [
     "BudgetExceeded",
     "BudgetedClient",
     "CancellableClient",
+    "ErrorCountingClient",
     "LLMClient",
     "LLMError",
     "LiteLLMClient",

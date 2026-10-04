@@ -160,6 +160,7 @@ def review(
     try:
         with prepare(source, config, repo) as prepared:
             result = review_diff(prepared.diff, config, make_client(config.llm_mode), tracer)
+            _check_model(result)  # before posting: never post a review no model made
             if post and prepared.github is not None and prepared.pull is not None:
                 try:
                     rep = publish(prepared.github, prepared.pull, result, prepared.diff)
@@ -182,7 +183,36 @@ def review(
         raise typer.Exit(code=1)
 
 
+DEFAULT_CONFIG = ".scrutai.yml"
+
+
+def _check_model(result: ReviewResult) -> None:
+    """Say loudly when model calls failed; stop (exit 2) when none succeeded."""
+    err = Console(stderr=True)
+    if result.model_unavailable:
+        err.print(
+            f"[red]No model call succeeded[/red] ({result.model_errors} failed). First error:\n"
+            f"  {result.model_error}\n"
+            "Check the API key in this terminal, the model names in your config, and the network."
+        )
+        raise typer.Exit(code=2)
+    if result.model_errors:
+        err.print(
+            f"[yellow]Warning:[/yellow] {result.model_errors} of {result.model_calls} model "
+            f"call(s) failed; findings they would have produced are missing. First error: "
+            f"{result.model_error}"
+        )
+
+
 def _load_config(path: str) -> ScrutaiConfig:
+    # A missing default config means "use the defaults"; a missing file the user named is a
+    # mistake, and silently falling back would quietly run in mock mode instead of live.
+    if path != DEFAULT_CONFIG and not Path(path).is_file():
+        hint = ""
+        if Path(f"{path}.txt").is_file():
+            hint = f" (found {path}.txt: Notepad added .txt; rename it to {Path(path).name})"
+        console.print(f"[red]Config file not found:[/red] {path}{hint}")
+        raise typer.Exit(code=2)
     try:
         config = ScrutaiConfig.load(path)
     except (ValueError, OSError) as exc:  # pydantic ValidationError is a ValueError
@@ -371,7 +401,17 @@ def eval_cmd(
     def progress(done: int, total: int, case: str) -> None:
         if config.llm_mode != "mock":  # live cases take seconds each: show they move
             spent = sum(r.cost for r in details)
-            err.print(f"  [{done}/{total}] {case}  (${spent:.3f} so far)")
+            failed = sum(r.model_errors for r in details)
+            note = f", [red]{failed} failed model call(s)[/red]" if failed else ""
+            err.print(f"  [{done}/{total}] {case}  (${spent:.3f} so far{note})")
+            if (
+                details
+                and details[-1].model_calls
+                and done == 1
+                and not any(r.model_calls > r.model_errors for r in details)
+            ):
+                err.print(f"  [red]Every model call failed:[/red] {details[-1].model_error}")
+                raise typer.Exit(code=2)
 
     try:
         metrics = run_benchmark(
