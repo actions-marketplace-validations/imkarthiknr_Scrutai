@@ -182,7 +182,18 @@ def review(
         raise typer.Exit(code=1)
 
 
+DEFAULT_CONFIG = ".scrutai.yml"
+
+
 def _load_config(path: str) -> ScrutaiConfig:
+    # A missing default config means "use the defaults"; a missing file the user named is a
+    # mistake, and silently falling back would quietly run in mock mode instead of live.
+    if path != DEFAULT_CONFIG and not Path(path).is_file():
+        hint = ""
+        if Path(f"{path}.txt").is_file():
+            hint = f" (found {path}.txt: Notepad added .txt; rename it to {Path(path).name})"
+        console.print(f"[red]Config file not found:[/red] {path}{hint}")
+        raise typer.Exit(code=2)
     try:
         config = ScrutaiConfig.load(path)
     except (ValueError, OSError) as exc:  # pydantic ValidationError is a ValueError

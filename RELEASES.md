@@ -65,6 +65,12 @@ Changes on `main` that are not in a tagged version yet.
 - `SECURITY.md` (how to report, scope, response times) and issue forms for bugs, false positives
   and missed issues.
 
+### Fixed
+- **`--config FILE` silently fell back to the defaults (mock mode) when the file didn't exist.**
+  A "live" benchmark could then run in mock mode without warning. A missing file you name is now
+  an error (exit 2), with a hint when Notepad saved it as `FILE.txt`. A missing default
+  `.scrutai.yml` still means "use the defaults".
+
 ### Documentation
 - The README labels the mock numbers as a pipeline check, and adds a *Real models* section with how
   to measure a model yourself. Its real-model numbers are still to be published.
