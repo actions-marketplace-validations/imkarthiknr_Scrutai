@@ -101,8 +101,9 @@ def load_cases(path: str | Path) -> list[Case]:
     return cases
 
 
-def run_case(case: Case, config: ScrutaiConfig) -> CaseResult:
+def run_case(case: Case, config: ScrutaiConfig, trace_dir: str | Path | None = None) -> CaseResult:
     from ..orchestrator import review_diff  # local: orchestrator imports agents
+    from ..trace import Tracer
 
     with tempfile.TemporaryDirectory(prefix="scrutai-eval-") as root:
         for rel, content in case.repo.items():
@@ -120,7 +121,16 @@ def run_case(case: Case, config: ScrutaiConfig) -> CaseResult:
         diff = DiffContext(repo_root=root, files=[ChangedFile(path=case.file, patch=case.patch)])
         # Fresh client per case keeps token accounting per-run honest.
         llm = make_client(config.llm_mode)
-        result = review_diff(diff, config, llm)
+        tracer = (
+            Tracer(jsonl=str(Path(trace_dir) / f"{case.id}.jsonl"), run_id=case.id)
+            if trace_dir
+            else None
+        )
+        try:
+            result = review_diff(diff, config, llm, tracer)
+        finally:
+            if tracer is not None:
+                tracer.close()
 
     raw: list[Finding] = [*result.findings, *result.dropped]
     return CaseResult(
@@ -205,18 +215,20 @@ def run_benchmark(
     on_case: CaseCallback | None = None,
     limit: int | None = None,
     max_total_cost: float = 0.0,
+    trace_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run every case (or the first `limit`) and return aggregate metrics.
 
     Pass a list as `details` to also collect the per-case results. With
     `max_total_cost` (dollars, 0 = no cap) the run stops after the case that
-    reaches it; the metrics then cover the cases that ran and say so.
+    reaches it; the metrics then cover the cases that ran and say so. With
+    `trace_dir`, each case's trace is written to `<trace_dir>/<case id>.jsonl`.
     """
     cases = load_cases(path)[:limit] if limit else load_cases(path)
     # Filled as cases finish, so an on_case callback can read the running cost.
     results: list[CaseResult] = details if details is not None else []
     for case in cases:
-        results.append(run_case(case, config))
+        results.append(run_case(case, config, trace_dir))
         if on_case:
             on_case(len(results), len(cases), case.id)
         if max_total_cost and sum(r.cost for r in results) >= max_total_cost:
