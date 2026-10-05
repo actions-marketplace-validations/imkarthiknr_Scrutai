@@ -240,7 +240,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}   # tools read the PR's code
-      - uses: imkarthiknr/Scrutai@main
+      - uses: imkarthiknr/Scrutai@v0.4.2   # pin a release; @main is unreleased work
         with:
           llm-mode: live
           install-semgrep: "true"
@@ -665,8 +665,10 @@ Yes. Specialists share one seam, `Specialist._loop`. The CrewAI backend override
 - ✅ **v0.3:** agent theater web UI, CrewAI backend, `eval --compare`.
 - ✅ **v0.4:** MCP server: review, explain, post and benchmark tools for AI assistants, over stdio
   or authenticated HTTP.
+- ✅ **v0.4.1–0.4.2:** on PyPI; works on Windows; failed model calls are reported, never a silent
+  "clean" review; the Action is ready for the GitHub Marketplace.
 - 🔜 **Next:** published live-model benchmark numbers, a Google ADK backend, Semgrep taint rules for
-  data-flow issues, a PyPI release.
+  data-flow issues.
 
 See [RELEASES.md](https://github.com/imkarthiknr/Scrutai/blob/main/RELEASES.md) for what each version contains.
 

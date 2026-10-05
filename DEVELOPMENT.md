@@ -457,7 +457,7 @@ may change behaviour; RELEASES.md calls those changes out.
    (`## 0.X.0`; the release workflow copies that section into the GitHub release).
 2. Bump the version in all three places: `pyproject.toml`, `src/scrutai/__init__.py` and
    `web/package.json` (`cd web && npm version 0.X.0 --no-git-tag-version`). The README's PyPI
-   badge updates itself.
+   badge updates itself; update the Action example's `uses: imkarthiknr/Scrutai@v0.X.0` by hand.
 3. Rebuild the UI (`cd web && npm run build`) and commit the bundle.
 4. Merge to `main` with CI green (the `package` job builds the wheel and runs it outside the
    repository), then tag the release: `git tag v0.X.0 && git push origin v0.X.0`.
@@ -470,6 +470,11 @@ The tag starts `.github/workflows/release.yml`:
 3. It publishes to **TestPyPI**, then to **PyPI**, through trusted publishing (no API tokens
    exist).
 4. It creates the GitHub release with the built files attached.
+
+Then list that release on the GitHub Marketplace (a manual step; the API cannot do it): open the
+release, choose **Edit**, tick **Publish this Action to the GitHub Marketplace**, check the
+categories (*Code review*, *Code quality*) and choose **Update release**. The first time, GitHub
+asks the owner to accept the Marketplace Developer Agreement; two-factor authentication must be on.
 
 To rehearse without publishing to PyPI, run the workflow manually (Actions → release → Run
 workflow): that run stops after TestPyPI. A version number can be uploaded to PyPI only once,

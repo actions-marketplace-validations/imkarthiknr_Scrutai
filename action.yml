@@ -1,7 +1,7 @@
-name: Scrutai review
+name: Scrutai AI Code Review
 description: >-
-  Multi-agent code review with an adversarial critic. Posts a summary comment and
-  inline findings on the pull request; optionally emits SARIF for code scanning.
+  AI code review where specialist agents find issues and an adversarial critic
+  kills the false positives.
 author: Karthik N R
 branding:
   icon: shield
