@@ -85,6 +85,9 @@ Changes on `main` that are not in a tagged version yet.
 ### Documentation
 - The README labels the mock numbers as a pipeline check, and adds a *Real models* section with how
   to measure a model yourself. Its real-model numbers are still to be published.
+- Two diagrams, in the README and `docs/ARCHITECTURE.md`: the architecture, and a finding's trial
+  through the critic. Their SVG sources are in `docs/images/diagrams/`;
+  `python scripts/capture_media.py diagrams` re-renders them.
 
 ---
 

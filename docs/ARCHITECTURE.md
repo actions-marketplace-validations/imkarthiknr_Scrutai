@@ -3,6 +3,8 @@
 This document explains *why* Scrutai is built the way it is. (The "why" is what an
 interviewer probes, so it is kept honest and specific.)
 
+![Scrutai architecture: surfaces, the LangGraph pipeline, the model-call wrappers and the outputs](images/architecture.png)
+
 ## Library-first
 
 `scrutai` the package is the engine. The CLI, the GitHub Action, and the (v0.3) web UI are all
@@ -40,6 +42,8 @@ loop starts: a deterministic rule firing on the exact line is the strongest evid
 carry.
 
 ## Why an adversarial critic (self-reflection), and why a debate
+
+![A finding's trial: uphold, downgrade, kill or challenge; a challenged finding is defended with fresh evidence or withdrawn](images/finding-trial.png)
 
 LLM reviewers are noisy: they raise plausible-sounding issues that don't hold up. The critic is a
 self-reflection loop that sees the cited line *and its surrounding code* (not just the specialist's
