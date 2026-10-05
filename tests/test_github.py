@@ -125,3 +125,12 @@ def test_action_script_requires_a_pr(tmp_path: Any) -> None:
         ["bash", "-e", "-c", _action_script()], env=env, capture_output=True, text=True
     )
     assert proc.returncode == 2 and "pull_request" in proc.stdout
+
+
+def test_action_metadata_is_marketplace_ready() -> None:
+    import yaml
+
+    action = yaml.safe_load(Path("action.yml").read_text(encoding="utf-8"))
+    assert action["name"] and action["author"]
+    assert 0 < len(action["description"]) <= 125  # the Marketplace shows a one-line summary
+    assert set(action["branding"]) == {"icon", "color"}

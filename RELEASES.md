@@ -6,7 +6,8 @@ behaviour; such changes are listed under **Changed**, with upgrade notes.
 
 | Version | Date | Theme | Status |
 |---|---|---|---|
-| [0.4.1](#041) | 2026-10-03 | Works on Windows | **Current** |
+| [0.4.2](#042) | 2026-10-05 | No silent failures | **Current** |
+| [0.4.1](#041) | 2026-10-03 | Works on Windows | Superseded |
 | [0.4.0](#040) | 2026-10-03 | Ask for a review from any AI assistant | Superseded |
 | [0.3.0](#030) | 2026-10-02 | See it work, swap the framework | Superseded |
 | [0.2.0](#020) | 2026-10-01 | Ready for real pull requests | Superseded |
@@ -53,6 +54,12 @@ Install a released version from [PyPI](https://pypi.org/project/scrutai/) (`pip 
 
 Changes on `main` that are not in a tagged version yet.
 
+---
+
+## 0.4.2
+
+**Released 2026-10-05 · "No silent failures"**
+
 ### Added
 - **Safe real-model benchmark runs:**
   - `scrutai eval --limit N` runs only the first N cases, and `--max-total-cost` stops the run
@@ -66,6 +73,9 @@ Changes on `main` that are not in a tagged version yet.
   critic's decisions and the debate, to see why a case scored as it did.
 - `SECURITY.md` (how to report, scope, response times) and issue forms for bugs, false positives
   and missed issues.
+- **Ready for the GitHub Marketplace.** The Action is now named *Scrutai AI Code Review*, with a
+  shorter description for the listing, and the README pins it to a release
+  (`imkarthiknr/Scrutai@v0.4.2`) instead of `@main`.
 
 ### Fixed
 - **Model failures were silent.** When every model call failed (for example a missing or invalid
