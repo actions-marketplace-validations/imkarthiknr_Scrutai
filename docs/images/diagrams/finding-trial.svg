@@ -1,0 +1,35 @@
+<svg width="1400" height="590" viewBox="0 0 1400 590" xmlns="http://www.w3.org/2000/svg">
+<style>
+text{font-family:Inter,'Segoe UI',Helvetica,Arial,sans-serif}
+
+.t{font-size:15px;fill:#1f2330}.s{font-size:12.5px;fill:#5b6170}
+.n{fill:#fff;stroke:#6d4aff;stroke-width:1.8}.c{fill:#fff4ec;stroke:#e8772e;stroke-width:1.8}
+.ok{fill:#f2faf5;stroke:#3a9a62;stroke-width:1.8}.no{fill:#fdf1f1;stroke:#c94a4a;stroke-width:1.8}.w{fill:#f4f4f6;stroke:#8a8f9c;stroke-width:1.6;stroke-dasharray:5 4}
+.ln{stroke:#7b8193;stroke-width:1.6;fill:none;marker-end:url(#a)}
+.lb{font-size:12.5px;fill:#5b6170;font-style:italic}
+</style>
+<rect width="100%" height="100%" fill="#fff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#7b8193"/></marker></defs>
+<text x="40" y="44" style="font-size:24px;font-weight:700;fill:#1f2330">A finding's trial</text>
+<text x="40" y="70" class="s">Every finding survives scrutiny, or it doesn't ship.</text>
+<rect x="40" y="230" width="200" height="70" rx="10" class="n"/><text x="58" y="258" class="t">Raised by a specialist</text><text x="58" y="280" class="s">file:line · category · evidence</text>
+<path d="M240 265 L318 265" class="ln"/>
+<rect x="320" y="230" width="190" height="70" rx="10" class="c"/><text x="338" y="258" class="t">Critic judges</text><text x="338" y="280" class="s">sees cited line + context</text>
+<!-- branches -->
+<path d="M510 250 C560 250 560 120 618 120" class="ln"/><text x="540" y="150" class="lb">uphold</text>
+<path d="M510 258 C580 258 580 205 618 205" class="ln"/><text x="560" y="222" class="lb">downgrade</text>
+<path d="M510 280 C580 280 580 330 618 330" class="ln"/><text x="560" y="322" class="lb">challenge</text>
+<path d="M510 292 C560 292 560 450 618 450" class="ln"/><text x="530" y="430" class="lb">kill</text>
+<rect x="620" y="90" width="200" height="60" rx="10" class="ok"/><text x="638" y="116" class="t">Upheld</text><text x="638" y="136" class="s">critic sets confidence</text>
+<rect x="620" y="175" width="200" height="60" rx="10" class="ok"/><text x="638" y="201" class="t">Upheld, lower severity</text><text x="638" y="221" class="s">severity can only go down</text>
+<rect x="620" y="300" width="200" height="60" rx="10" class="c"/><text x="638" y="326" class="t">Back to the specialist</text><text x="638" y="346" class="s">with a concrete question</text>
+<rect x="620" y="420" width="200" height="60" rx="10" class="no"/><text x="638" y="446" class="t">Killed</text><text x="638" y="466" class="s">kept in dropped, with reason</text>
+<path d="M820 320 C870 320 870 290 918 290" class="ln"/><text x="850" y="282" class="lb">defend</text>
+<path d="M820 340 C880 340 880 420 918 420" class="ln"/><text x="872" y="405" class="lb">withdraw</text>
+<rect x="920" y="255" width="220" height="70" rx="10" class="c"/><text x="938" y="283" class="t">Fresh tool evidence</text><text x="938" y="305" class="s">read_file · grep · blame · semgrep</text>
+<rect x="920" y="395" width="220" height="60" rx="10" class="no"/><text x="938" y="421" class="t">Withdrawn</text><text x="938" y="441" class="s">a false positive caught</text>
+<path d="M940 325 L940 372 Q940 382 930 382 L860 382 Q850 382 850 392 L850 500 Q850 510 840 510 L425 510 Q415 510 415 500 L415 302" style="stroke:#e8772e;stroke-width:1.8;fill:none" marker-end="url(#a)"/><text x="440" y="530" class="lb" style="fill:#e8772e">defense is re-judged next round (bounded by max_critic_rounds)</text>
+<rect x="1180" y="90" width="190" height="80" rx="10" class="w"/><text x="1196" y="116" class="t">Unjudged → withheld</text><text x="1196" y="138" class="s">provider error, bad reply,</text><text x="1196" y="156" class="s">or budget spent</text>
+<rect x="1180" y="200" width="190" height="80" rx="10" class="w"/><text x="1196" y="226" class="t">Out of rounds</text><text x="1196" y="248" class="s">decided on the critic's</text><text x="1196" y="266" class="s">provisional confidence</text>
+<text x="40" y="568" class="s">Only upheld findings at or above min_severity and min_confidence reach the report. Everything else stays auditable with --show-dropped.</text>
+</svg>

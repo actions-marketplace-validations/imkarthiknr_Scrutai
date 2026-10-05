@@ -443,20 +443,8 @@ you switch to `llm_mode: live` without changing `models`, the Claude defaults ap
 
 ## How it works
 
-```mermaid
-flowchart LR
-    D[diff] --> R{route}
-    R -->|per chunk| S1[security]
-    R -->|per chunk| S2[correctness]
-    R -->|per chunk| S3[tests]
-    R -->|per chunk| S4[performance]
-    R -->|per chunk| S5[style]
-    S1 & S2 & S3 & S4 & S5 --> C[collect + dedupe]
-    C --> K{critic}
-    K -->|challenge| F[defend]
-    F --> K
-    K -->|settled or out of rounds| V[verdict]
-```
+<img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/architecture.png" alt="Scrutai architecture: five surfaces (CLI, GitHub Action, MCP server, agent theater, Python library) call review_diff(), which runs a LangGraph pipeline: route, five specialists in parallel, collect, then the critic with a defend loop, then verdict. Every model call passes through tracing, cancellation, budget and error-counting wrappers to LiteLLM or the mock model. The output is a typed ReviewResult." width="900">
+
 
 1. **Parse and filter.** The diff is parsed with real new-file line numbers. `include` and `exclude`
    globs apply, and deleted or binary files are dropped.
@@ -477,6 +465,8 @@ flowchart LR
    | **downgrade** | Real but over-rated; severity can only go down. |
    | **kill** | Not in this diff, only in a comment or string, a placeholder, a constant input... |
    | **challenge** | Plausible but under-evidenced; the specialist must defend it or withdraw. |
+
+   <img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/finding-trial.png" alt="A finding's trial: raised by a specialist, judged by the critic, then upheld, upheld at lower severity, killed, or sent back to the specialist, who either defends it with fresh tool evidence (re-judged next round) or withdraws it. A finding the critic could not judge is withheld." width="900">
 
 6. **Debate.** Challenged findings go back to their specialist, which may gather new tool evidence.
    The critic re-judges only those. `max_critic_rounds` bounds the loop.

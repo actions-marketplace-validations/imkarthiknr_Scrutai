@@ -1,6 +1,7 @@
-"""Regenerate the README's screenshots and screen recording from the real tools.
+"""Regenerate the README's screenshots, screen recording and diagrams.
 
-Everything is captured from actual runs in mock mode (offline, deterministic):
+Screenshots and the recording are captured from actual runs in mock mode (offline,
+deterministic):
 
     docs/images/cli-review.png      `scrutai review --demo --show-dropped`
     docs/images/cli-eval.png        `scrutai eval`
@@ -8,10 +9,16 @@ Everything is captured from actual runs in mock mode (offline, deterministic):
     docs/images/theater-verdict.png the agent theater after a review
     docs/images/theater-debate.png  a finding's trial: challenge, defense, ruling
     docs/images/theater.gif         the theater replaying a review (also .mp4)
+    docs/images/architecture.png    rendered from docs/images/diagrams/architecture.svg
+    docs/images/finding-trial.png   rendered from docs/images/diagrams/finding-trial.svg
+
+The diagrams are drawn by hand: edit the SVG sources in docs/images/diagrams/ and
+re-render them to docs/images/<name>.png.
 
 Needs: `pip install -e ".[dev]"`, a Chromium for Playwright, and ffmpeg.
 
-    python scripts/capture_media.py
+    python scripts/capture_media.py            # everything
+    python scripts/capture_media.py diagrams   # only the diagrams (no ffmpeg needed)
 """
 
 from __future__ import annotations
@@ -71,6 +78,13 @@ def svg_to_png(browser, svg: str, out: Path) -> None:  # type: ignore[no-untyped
     page.set_content(f"<html><body style='margin:0;background:#fff'>{svg}</body></html>")
     page.locator("svg").first.screenshot(path=str(out), omit_background=True)
     page.close()
+
+
+def diagrams(browser) -> None:  # type: ignore[no-untyped-def]
+    for src in sorted((OUT / "diagrams").glob("*.svg")):
+        out = OUT / f"{src.stem}.png"
+        svg_to_png(browser, src.read_text(encoding="utf-8"), out)
+        print("wrote", out)
 
 
 def terminals(browser) -> None:  # type: ignore[no-untyped-def]
@@ -265,10 +279,12 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = chromium(p)
-        terminals(browser)
-        with theater() as url:
-            screenshots(browser, url)
-            recording(browser, url)
+        diagrams(browser)
+        if sys.argv[1:] != ["diagrams"]:
+            terminals(browser)
+            with theater() as url:
+                screenshots(browser, url)
+                recording(browser, url)
         browser.close()
 
 
