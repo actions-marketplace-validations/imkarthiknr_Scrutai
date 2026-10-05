@@ -119,3 +119,54 @@ def test_required_semgrep_missing_fails_fast(
     cfg.write_text("semgrep: required\n")
     res = CliRunner().invoke(app, ["review", "--demo", "--config", str(cfg)])
     assert res.exit_code == 2 and "required" in res.output
+
+
+class KillHappyCritic:
+    """Specialist reports the injection; the critic always kills, never with counter-evidence."""
+
+    tokens_used = 0
+    cost_usd = 0.0
+
+    def complete(self, *, model: str, system: str, prompt: str) -> str:
+        if "you are the critic" in system.lower():
+            return json.dumps({"decision": "kill", "confidence": 0.2, "note": "probably fine"})
+        if "MODE: defend" in prompt:
+            return json.dumps({"defense": "cmd comes from the caller", "evidence": ["L3"]})
+        finding = {
+            "title": "Shell injection",
+            "file": "job.py",
+            "line": 3,
+            "category": "injection",
+            "severity": "high",
+            "confidence": 0.8,
+            "evidence": ["L3: subprocess.run("],
+        }
+        return json.dumps({"findings": [finding]})
+
+
+@pytest.mark.parametrize("rule_fired", [True, False])
+def test_a_rule_backed_finding_survives_a_kill_without_counter_evidence(
+    git_repo: Callable[[dict[str, str]], Path],
+    fake_semgrep: Callable[[list[object]], Path],
+    rule_fired: bool,
+) -> None:
+    repo = git_repo(
+        {"job.py": "import subprocess\n\nsubprocess.run(\n    cmd,\n    shell=True,\n)\n"}
+    )
+    rule = "scrutai.injection.subprocess-shell"
+    fake_semgrep([_result("job.py", 3, rule)] if rule_fired else [])
+    diff = diff_from_git("main", "HEAD", str(repo))
+    cfg = ScrutaiConfig(enabled_agents=["security"])
+    result = review_diff(diff, cfg, KillHappyCritic())
+    if rule_fired:
+        (f,) = result.findings
+        assert f.sast_rule == rule and f.defense == "cmd comes from the caller"
+        assert [h.split(" (")[0] for h in f.history] == [
+            "round 1: challenge",
+            "defense: submitted",
+            "round 2: uphold",
+        ]
+    else:
+        assert result.findings == []
+        (dropped,) = result.dropped
+        assert dropped.sast_rule is None and dropped.history[0].startswith("round 1: kill")

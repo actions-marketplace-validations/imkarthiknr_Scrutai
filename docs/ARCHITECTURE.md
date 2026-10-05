@@ -59,6 +59,15 @@ Two rules keep the promise "every finding survives scrutiny, or it doesn't ship"
 * Killed and withheld findings are kept in `ReviewResult.dropped` with the reason, so the critic's
   work is auditable (`--show-dropped`) and measurable (the eval ablation).
 
+A third rule protects deterministic evidence. When a Semgrep rule fired on the exact line a
+finding cites, the finding records it (`Finding.sast_rule`) and the critic is told so. A **kill**
+of such a finding must come with `counter_evidence` quoting the code that shows it is safe (a
+constant input, a fixture, sanitized input). Without it the kill is overruled: it becomes a
+**challenge** while rounds remain, and after that the finding stands. The burden of proof sits with
+whoever argues against the rule. It is not "never kill": Semgrep does fire on constant inputs such
+as `os.system("ls")`, and a kill that quotes that stands. (Suggested by a reader of the launch
+post; see [issue #12](https://github.com/imkarthiknr/Scrutai/issues/12).)
+
 ### Why the loop terminates where it does
 
 `max_critic_rounds` bounds the debate (default 2: judge, one defense, re-judge). A finding still

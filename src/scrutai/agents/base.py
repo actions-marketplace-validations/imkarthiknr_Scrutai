@@ -54,6 +54,10 @@ class Specialist:
         """Observations gathered deterministically before the loop (e.g. SAST)."""
         return []
 
+    def ground(self, findings: list[Finding]) -> list[Finding]:
+        """Attach deterministic provenance from `seed` to the findings it backs."""
+        return findings
+
     def context(self, diff: DiffContext) -> str:
         parts = [f"ROLE: {self.name}", "TASK: review the lines this diff adds."]
         for f in self.files(diff):
@@ -97,7 +101,7 @@ class Specialist:
             answer_keys=REVIEW_ANSWER,
             final_note="--- FINAL: tool budget spent; reply with findings now.",
         )
-        return self._parse(payload, diff, toolbox.calls) if payload is not None else []
+        return self.ground(self._parse(payload, diff, toolbox.calls)) if payload is not None else []
 
     def _loop(
         self,

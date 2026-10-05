@@ -469,7 +469,9 @@ you switch to `llm_mode: live` without changing `models`, the Claude defaults ap
    <img src="https://raw.githubusercontent.com/imkarthiknr/Scrutai/main/docs/images/finding-trial.png" alt="A finding's trial: raised by a specialist, judged by the critic, then upheld, upheld at lower severity, killed, or sent back to the specialist, who either defends it with fresh tool evidence (re-judged next round) or withdraws it. A finding the critic could not judge is withheld." width="900">
 
 6. **Debate.** Challenged findings go back to their specialist, which may gather new tool evidence.
-   The critic re-judges only those. `max_critic_rounds` bounds the loop.
+   The critic re-judges only those. `max_critic_rounds` bounds the loop. If a Semgrep rule fired on
+   the cited line, a kill must quote counter-evidence from the code; without it the kill becomes a
+   challenge, and once rounds run out the finding stands.
 7. **Verdict.** Survivors above `min_confidence` and `min_severity` become the result.
    `request_changes` at or above `fail_on`, otherwise `comment`, or `approve` if nothing survived.
 

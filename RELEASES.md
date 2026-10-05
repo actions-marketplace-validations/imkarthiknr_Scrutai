@@ -54,6 +54,19 @@ Install a released version from [PyPI](https://pypi.org/project/scrutai/) (`pip 
 
 Changes on `main` that are not in a tagged version yet.
 
+### Changed
+- **A finding backed by a Semgrep hit can only be killed with counter-evidence**
+  ([#12](https://github.com/imkarthiknr/Scrutai/issues/12)).
+  - When a Semgrep rule fired on the exact line and category a security finding cites, the finding
+    records the rule (`Finding.sast_rule`, kept through deduplication) and the critic's prompt says so.
+  - The critic must then quote the code that shows the finding is safe (`counter_evidence`) to kill
+    it. Without that, the kill becomes a challenge while debate rounds remain, and after that the
+    finding stands (at `min_confidence`). The overrule is recorded in the finding's history and in
+    the trace (`overruled: true` on the decision event).
+  - A kill that does quote counter-evidence stands, and the quote is kept in the critic's note.
+  - **Upgrade note:** custom critic models or prompts should return `counter_evidence` with kills;
+    reviews without Semgrep installed behave exactly as before.
+
 ---
 
 ## 0.4.2

@@ -159,6 +159,9 @@ class Finding(BaseModel):
     history: list[str] = Field(default_factory=list)
     # True when the critic could not judge it (error/budget); such findings are dropped.
     unjudged: bool = False
+    # The Semgrep rule that fired on this exact line, if any. Deterministic
+    # evidence: the critic may kill such a finding only with counter-evidence.
+    sast_rule: str | None = None
 
     def fingerprint(self) -> str:
         """Stable id across pushes: ignores the line number, which shifts as code moves.
