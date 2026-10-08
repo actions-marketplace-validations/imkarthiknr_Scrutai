@@ -508,7 +508,12 @@ class MockLLMClient:
         in_test_file = "(kind: test)" in fields.get("FILE", "")
 
         def kill(conf: float, note: str) -> dict[str, Any]:
-            return {"decision": "kill", "confidence": conf, "note": note}
+            return {
+                "decision": "kill",
+                "confidence": conf,
+                "note": note,
+                "counter_evidence": f"L{fields.get('LINE')}: {cited}",
+            }
 
         if cited.startswith("("):
             return kill(0.1, f"Out of scope: {cited.strip('()')}.")

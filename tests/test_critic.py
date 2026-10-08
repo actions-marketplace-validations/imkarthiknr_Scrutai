@@ -190,3 +190,45 @@ def test_secret_value_is_the_matched_one_not_the_first_string() -> None:
     patch = '+conn = connect(host="db", password="Pr0d-Db!2024")\n'
     result = review_diff(_diff(patch), ScrutaiConfig(enabled_agents=["security"]), MockLLMClient())
     assert [f.category for f in result.findings] == ["hardcoded_secret"]
+
+
+# ---- rule-backed findings: a kill needs counter-evidence (issue #12) ----------
+
+KILL = {"decision": "kill", "confidence": 0.2, "note": "looks fine to me"}
+RULE = "scrutai.injection.os-system"
+
+
+def test_prompt_tells_the_critic_a_rule_fired() -> None:
+    prompt = build_prompt(_finding(sast_rule=RULE), DIFF, 1, 2)
+    assert f"SAST: Semgrep rule {RULE} fired on the cited line" in prompt
+    assert "SAST:" not in build_prompt(_finding(), DIFF, 1, 2)
+
+
+def test_kill_without_counter_evidence_becomes_a_challenge() -> None:
+    f = judge(Critic(KILL), ScrutaiConfig(), _finding(sast_rule=RULE), DIFF, 1)
+    assert f.alive and f.contested and RULE in (f.challenge or "")
+    assert f.history[-1].startswith("round 1: challenge")
+    assert "kill overruled" in (f.critic_note or "")
+
+
+def test_kill_without_counter_evidence_in_the_last_round_does_not_stand() -> None:
+    cfg = ScrutaiConfig()
+    f = judge(Critic(KILL), cfg, _finding(sast_rule=RULE), DIFF, cfg.max_critic_rounds)
+    assert f.alive and not f.contested and f.confidence == cfg.min_confidence
+    assert f.history[-1].startswith("round 2: uphold")
+
+
+def test_kill_with_counter_evidence_stands() -> None:
+    verdict = {**KILL, "counter_evidence": 'L1: os.system("ls")  # constant'}
+    f = judge(Critic(verdict), ScrutaiConfig(), _finding(sast_rule=RULE), DIFF, 1)
+    assert not f.alive and "Counter-evidence: L1: os.system" in (f.critic_note or "")
+
+
+def test_dedupe_keeps_the_rule_whichever_duplicate_wins() -> None:
+    from scrutai.critic import dedupe
+
+    backed = _finding(agent="security", confidence=0.5, sast_rule=RULE)
+    stronger = _finding(agent="correctness", confidence=0.9)
+    for order in ([backed, stronger], [stronger, backed]):
+        (kept,) = dedupe(order)
+        assert kept.agent == "correctness" and kept.sast_rule == RULE

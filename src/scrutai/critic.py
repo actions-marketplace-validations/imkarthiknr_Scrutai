@@ -35,9 +35,12 @@ SYSTEM = (
     "in a comment or string, if the value is a placeholder or test fixture, or if "
     "nothing untrusted can reach the sink. Downgrade it if real but over-rated. "
     "Challenge it (with a concrete question) if it is plausible but no tool "
-    "observation backs it. Uphold it only if the evidence shows a real problem.\n"
+    "observation backs it. Uphold it only if the evidence shows a real problem. "
+    "If a SAST rule fired on the cited line, a kill needs counter_evidence: quote the "
+    "code that shows it is safe (a constant input, a fixture, sanitized input).\n"
     'Return ONLY JSON: {"decision": "uphold"|"downgrade"|"kill"|"challenge", '
-    '"confidence": float 0-1, "severity"?: str, "note": str, "question"?: str}'
+    '"confidence": float 0-1, "severity"?: str, "note": str, "question"?: str, '
+    '"counter_evidence"?: str}'
 )
 
 
@@ -66,6 +69,12 @@ def build_prompt(finding: Finding, diff: DiffContext, round_no: int, max_rounds:
         f"CONTEXT:\n{context}",
         f"EVIDENCE:\n{evidence}",
     ]
+    if finding.sast_rule:
+        parts.append(
+            f"SAST: Semgrep rule {finding.sast_rule} fired on the cited line. This is "
+            "deterministic evidence: to kill this finding, give counter_evidence quoting "
+            "the code that shows it is safe."
+        )
     if finding.challenge:
         parts.append(f"YOUR EARLIER CHALLENGE: {finding.challenge}")
     if finding.defense:
@@ -90,6 +99,7 @@ def judge(
         decision = str(verdict.get("decision", "uphold")).lower()
         f.confidence = min(max(float(verdict.get("confidence", f.confidence)), 0.0), 1.0)
         note = str(verdict.get("note", "")).strip()
+        counter = str(verdict.get("counter_evidence") or "").strip()
     except (LLMError, json.JSONDecodeError, TypeError, ValueError) as exc:
         # Every finding survives scrutiny or it doesn't ship: one the critic
         # could not judge (provider error, garbage reply, budget spent) is
@@ -100,9 +110,35 @@ def judge(
         f.history.append(f"round {round_no}: unjudged {exc!s}"[:200])
         return f
 
+    overruled = decision == "kill" and bool(f.sast_rule) and not counter
+    if overruled:
+        # A deterministic rule fired on this line, so the burden of proof is on
+        # the critic: a kill without counter-evidence does not stand. It becomes
+        # a challenge while rounds remain; after that the finding stands.
+        last = round_no >= config.max_critic_rounds
+        decision = "uphold" if last else "challenge"
+        f.confidence = max(f.confidence, config.min_confidence)
+        note = (
+            f"kill overruled: Semgrep rule {f.sast_rule} fired on this line and no "
+            f"counter-evidence was given ({note or 'no reason'})"
+        )
+        verdict["question"] = (
+            f"Semgrep rule {f.sast_rule} fired on line {f.line}. Show with tools whether "
+            "untrusted input reaches it, or withdraw."
+        )
+    elif decision == "kill" and counter:
+        note = f"{note} Counter-evidence: {counter}".strip()
+
     f.critic_note = note or decision
     f.history.append(f"round {round_no}: {decision} ({f.confidence:.2f}) {note}".rstrip())
-    emit("decision", round=round_no, decision=decision, note=note, **finding_ref(f))
+    emit(
+        "decision",
+        round=round_no,
+        decision=decision,
+        note=note,
+        overruled=overruled,
+        **finding_ref(f),
+    )
     f.contested = False
     if decision == "kill":
         f.alive = False
@@ -146,5 +182,9 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
     for f in findings:
         cur = best.get(f.key())
         if cur is None or f.confidence > cur.confidence:
+            if cur is not None and cur.sast_rule and not f.sast_rule:
+                f = f.model_copy(update={"sast_rule": cur.sast_rule})
             best[f.key()] = f
+        elif f.sast_rule and not cur.sast_rule:
+            cur.sast_rule = f.sast_rule
     return list(best.values())
